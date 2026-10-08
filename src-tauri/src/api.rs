@@ -64,6 +64,9 @@ impl Api {
                 std::env::consts::OS
             ))
             .timeout(Duration::from_secs(20))
+            // Nunca seguir redirecionamento: o reqwest descarta o Authorization ao trocar de host
+            // (sem www → www devolveria 401 em laço) e o token não pode viajar para host inesperado.
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("cliente HTTP");
         Self {
@@ -109,6 +112,9 @@ impl Api {
             .send()
             .await
             .map_err(|_| sem_conexao())?;
+        if let Some(erro) = redirecionou(&resposta) {
+            return Err(erro);
+        }
         let status = resposta.status();
         let corpo: Option<Value> = resposta.json().await.ok();
         if status.is_success() {
@@ -157,6 +163,9 @@ impl Api {
             };
         }
 
+        if let Some(erro) = redirecionou(&resposta) {
+            return Err(erro);
+        }
         let novo_etag = resposta
             .headers()
             .get(header::ETAG)
@@ -207,6 +216,9 @@ pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
         .send()
         .await
         .map_err(|_| sem_conexao())?;
+    if let Some(erro) = redirecionou(&resposta) {
+        return Err(erro);
+    }
     let status = resposta.status();
     let corpo: Option<Value> = resposta.json().await.ok();
     if !status.is_success() {
@@ -222,6 +234,24 @@ pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
         corpo["person"].get(campo).and_then(Value::as_str).unwrap_or("").to_owned()
     };
     Ok(Enrolado { nome: pessoa("display_name"), departamento: pessoa("department") })
+}
+
+/// 3xx que não é o 304 do ETag: o endereço compilado está errado (ex.: sem www). Erro explícito
+/// com o destino, para quem instala corrigir o GESTOR_API_BASE.
+fn redirecionou(resposta: &reqwest::Response) -> Option<ErroApi> {
+    let status = resposta.status();
+    if !status.is_redirection() || status == StatusCode::NOT_MODIFIED {
+        return None;
+    }
+    let destino = resposta
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("outro endereço");
+    Some(ErroApi::novo(
+        "server_error",
+        &format!("O endereço do Ápice Hub redireciona para {destino}; confira o endereço (www)."),
+    ))
 }
 
 fn sem_endereco() -> ErroApi {
