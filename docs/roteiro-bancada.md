@@ -9,25 +9,28 @@ esperado: **pare, anote (seção 6) e não tente consertar**.
 ## O que você recebe
 
 - `apice-gestor_0.1.0_x64.msi` e `SHA256SUMS.txt`: artefato da **run manual do build-msi** que o
-  Vigia indicou: **run [37817278308](https://github.com/zzin742/apice-gestor/actions/runs/37817278308)**
-  (main `7fb75e7`, com o arraste), SHA-256 `2c859b5be267a530238602cca7aebf6004378207d0591c2a4200be1cb4db3b16`. **Não use .msi de outra run**: só a manual tem o
-  endereço do mock embutido.
-- O **código de enrolamento** do mock: `K7QM-4XPA`. Vale **uma vez**, só para o mock do Mac do
-  José Luiz; não serve no Hub de verdade.
-- O Mac do José Luiz ligado, na mesma rede, com o mock da Ponte rodando.
+  Vigia indicou: **run [37833752635](https://github.com/zzin742/apice-gestor/actions/runs/37833752635)**
+  (main `25c1654`), SHA-256 `3e81b7acb1332158374a783ce99895cf304353bfc48adc87a6aede3dc35a9827`.
+  Esse `.msi` fala com o **Hub de produção**: `https://www.apicehub.com.br/api/gestor`.
+  **Não use .msi de outra run:** as anteriores apontam para o mock do Mac do José Luiz.
+- Um **código de enrolamento novo**, gerado pelo José Luiz em
+  `https://www.apicehub.com.br/admin/dispositivos` (só admin; abre pela URL). Ele vale **24 h**, é
+  de **uso único** e **aparece uma vez só** na tela: anote na hora, em papel, e não mande por
+  WhatsApp nem por grupo.
 
-> **Já instalou um .msi anterior neste PC?** Desinstale antes (seção 5), mas **não remova o
-> token** do Gerenciador de Credenciais. Depois instale o novo (passo 2) e **pule o passo 3**: a
-> máquina continua enrolada, e o código `K7QM-4XPA` já foi usado.
+> **O PC do Vinny já tem o app do mock, com o token do mock.** Esse token não vale no Hub de
+> verdade, então é preciso **reenrolar**: desinstale o app (seção 5; pode manter o token, ele vai
+> ser substituído), instale o `.msi` novo (passo 2) e **faça o passo 3 com o código novo**. O
+> `--enrolar` grava o token novo por cima do antigo.
 
-## 1. O PC enxerga o mock?
+## 1. O PC enxerga o Hub?
 
 No navegador do PC do Vinny, abra:
 
-    http://192.168.0.29:8787/__mock
+    https://www.apicehub.com.br
 
-- **Esperado:** a página do mock responde.
-- **Se não abrir:** pare aqui. O problema é a rede ou o firewall do Mac, não o app. Anote o que o
+- **Esperado:** o site do Ápice Hub abre.
+- **Se não abrir:** pare aqui. É a internet ou um bloqueio da rede, não o app. Anote o que o
   navegador mostrou.
 
 ## 2. Conferir e instalar o .msi
@@ -57,7 +60,8 @@ quem roda este passo; se rodar como outra conta, o app não acha o token.
 ```powershell
 $exe   = Join-Path $env:ProgramFiles ([char]0x00C1 + 'pice Gestor\apice-gestor.exe')
 $saida = Join-Path $env:TEMP 'enrolar.txt'
-$p = Start-Process -FilePath $exe -ArgumentList '--enrolar','K7QM-4XPA' -Wait -PassThru -NoNewWindow -RedirectStandardOutput $saida
+$codigo = Read-Host 'Código de enrolamento'
+$p = Start-Process -FilePath $exe -ArgumentList '--enrolar',$codigo -Wait -PassThru -NoNewWindow -RedirectStandardOutput $saida
 "saída: $($p.ExitCode)"; Get-Content $saida; Remove-Item $saida
 ```
 
@@ -67,12 +71,16 @@ $p = Start-Process -FilePath $exe -ArgumentList '--enrolar','K7QM-4XPA' -Wait -P
 | Saída | Quer dizer | O que fazer |
 |---|---|---|
 | `0` + "Nome · Departamento" | enrolado | siga para o passo 4 |
-| `2` | código inválido, expirado ou já usado | **não repita**. Peça um código novo ao José Luiz |
+| `2` | código inválido, expirado ou já usado | **não repita**. O José Luiz gera outro em `/admin/dispositivos` |
 | `3` | limite de tentativas do escritório | espere 5 min; pode repetir **o mesmo** código uma vez |
-| `4` | sem conexão com o mock | volte ao passo 1 |
+| `4` | sem conexão com o Hub | volte ao passo 1 |
 | `5` / `64` / outro | erro do app | pare e anote |
 
-**Não rode o comando duas vezes "para garantir".** O código é de uso único.
+**Não rode o comando duas vezes "para garantir".** O código é de uso único, e o escritório inteiro
+divide o limite de 10 tentativas por minuto.
+
+*Alternativa com o script (só se o José Luiz liberar: o `instalar.ps1` ainda aguarda o "manda bala"):* `powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1 -Reenrolar`
+faz os passos 2 e 3 de uma vez, com o `.msi` e o `SHA256SUMS.txt` na mesma pasta do script.
 
 ## 4. Abrir o app e conferir
 
@@ -82,7 +90,11 @@ Abra o **Ápice Gestor** pelo menu Iniciar.
       topo, sem cobrir a área de trabalho.
 - [ ] Ao abrir, o cartão mostra o **bom-dia** e recolhe sozinho em ~10 s.
 - [ ] Ao passar o mouse ou clicar, abre o cartão com as abas **Hoje · Semana · Todas**.
-- [ ] As tarefas são as do mock, e o carimbo "atualizado às HH:MM" aparece.
+- [ ] As tarefas são as do **José Luiz no Gestta** (o vínculo do dispositivo está com ele). Esperado
+      em 08/10: **40 tarefas abertas, todas vencidas (TI), 0 hoje, 0 concluídas hoje**. O carimbo
+      "atualizado às HH:MM" aparece.
+- [ ] Em `https://www.apicehub.com.br/admin/dispositivos` a máquina aparece, com último contato e
+      versão.
 - [ ] Na aba **Todas**, a busca por cliente ou tarefa filtra.
 - [ ] **Clicar numa tarefa abre ela no navegador** (Gestta).
 - [ ] O ícone aparece na bandeja.
