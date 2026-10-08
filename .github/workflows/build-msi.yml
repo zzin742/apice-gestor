@@ -32,6 +32,29 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
+      # Antes de qualquer build: o Hub responde 307 de apicehub.com.br para www.apicehub.com.br, e o
+      # reqwest descarta o Authorization quando o redirect troca de host. O enroll passaria e todo o
+      # resto viraria 401, com o agente caindo no enrolamento em laço (recado do Farol, 08/10).
+      - name: Confere api_base
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          API_BASE: ${{ inputs.api_base }}
+        run: |
+          $api = "$env:API_BASE".Trim()
+          if (-not $api) { exit 0 }
+          $uri = $null
+          if (-not [Uri]::TryCreate($api, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin 'http', 'https') {
+            "::error title=api_base inválido::'$api' não é um endereço http(s) completo."
+            exit 1
+          }
+          if ($uri.Host -ieq 'apicehub.com.br') {
+            $certo = $api -replace '(?i)://apicehub\.com\.br', '://www.apicehub.com.br'
+            "::error title=api_base sem www::'$api' está sem o www. O Hub redireciona (307) para o www e o agente perde o token no caminho: tudo vira 401. Use $certo"
+            exit 1
+          }
+          "api_base ok: $api"
+
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
