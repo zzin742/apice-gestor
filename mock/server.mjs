@@ -46,14 +46,17 @@ function send(res, status, body, headers = {}) {
 
 function fail(res, code) {
   send(res, STATUS[code], { api: API, error: { code, message: MESSAGES[code], retry_after_seconds: RETRY[code] ?? null } },
-    RETRY[code] ? { 'Retry-After': String(RETRY[code]) } : {});
+    { ...PRIVATE, ...(RETRY[code] ? { 'Retry-After': String(RETRY[code]) } : {}) });
 }
 
-// Responde 304 se o ETag bater. `parts` é o que define o ETag (contrato §3 e §4).
+// Toda resposta autenticada é da pessoa do token: nenhum cache pode servi-la a outro token (§1.3).
+const PRIVATE = { 'Cache-Control': 'private, no-cache', Vary: 'Authorization, Origin' };
+
+// Responde 304 se o ETag bater. `parts` é o que define o ETag e começa SEMPRE pela pessoa (§1.3).
 function sendCached(req, res, body, parts) {
   const etag = '"' + createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 20) + '"';
-  if (req.headers['if-none-match'] === etag) return send(res, 304, undefined, { ETag: etag });
-  send(res, 200, body, { ETag: etag, 'Cache-Control': 'no-cache' });
+  if (req.headers['if-none-match'] === etag) return send(res, 304, undefined, { ETag: etag, ...PRIVATE });
+  send(res, 200, body, { ETag: etag, ...PRIVATE });
 }
 
 async function readJson(req) {
@@ -117,8 +120,8 @@ function tasksBody(key) {
     },
     summary, tasks, truncated: false,
   };
-  // ETag = hash(today, max(atualizado_em) global, versão do de-para, config_version) — §3.
-  const etagParts = [today, stable.sync.last_sync_at, DEPARA_VERSION, CONFIG_VERSION];
+  // ETag = hash(pessoa, today, max(atualizado_em) global, versão do de-para, config_version) — §3.
+  const etagParts = [p.id, today, stable.sync.last_sync_at, DEPARA_VERSION, CONFIG_VERSION];
   return { etagParts, body: { api: API, generated_at: spInstant(n), ...stable } };
 }
 
@@ -156,7 +159,7 @@ const routes = {
       api: API, token,
       device_id: 'dev_' + createHash('sha1').update(token).digest('hex').slice(0, 12),
       person: personOut(PEOPLE[c.person]),
-    });
+    }, { 'Cache-Control': 'no-store' });
   },
 
   'GET /api/gestor/me/tasks': (req, res) => {
@@ -168,7 +171,7 @@ const routes = {
   'GET /api/gestor/me/config': (req, res) => {
     const a = auth(req, res); if (!a) return;
     const body = configBody(a.key);
-    sendCached(req, res, body, body);
+    sendCached(req, res, body, [PEOPLE[a.key].id, body]);
   },
 
   'POST /api/gestor/heartbeat': async (req, res) => {
@@ -176,7 +179,7 @@ const routes = {
     const body = await readJson(req);
     if (!body || typeof body.agent_version !== 'string') return fail(res, 'invalid_request');
     heartbeats.set(a.key, { ...body, _received: spInstant(now()) });
-    send(res, 200, { api: API, received_at: spInstant(now()), config_version: CONFIG_VERSION });
+    send(res, 200, { api: API, received_at: spInstant(now()), config_version: CONFIG_VERSION }, PRIVATE);
   },
 
   // Só do mock: inspeção rápida. Não existe no contrato.

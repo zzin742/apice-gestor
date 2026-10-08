@@ -47,7 +47,20 @@ qualquer dado novo que a interface precisar vira campo novo aqui, combinado com 
   `401 token_revoked` e o agente volta para a tela de enrolamento.
 - Um token = uma máquina = uma pessoa. Trocar a pessoa de uma máquina é reenrolar.
 
-### 1.3 Erros
+### 1.3 Cache — resposta autenticada é de uma pessoa só
+
+Achado do Prisma (08/10/2026): com ETag igual entre pessoas e sem `Vary`, o cache HTTP do navegador
+revalidou com `304` a resposta de outra pessoa, e o painel do Rafael mostrou os números do Caio.
+Por isso, **obrigatório no Hub**:
+
+- Todo ETag de rota autenticada (`me/tasks`, `me/config`) **inclui o id da pessoa**. ETag de outra
+  pessoa nunca dá `304`.
+- Toda resposta autenticada — `200`, `304` e erro — leva `Cache-Control: private, no-cache` e
+  `Vary: Authorization`. Nenhum CDN/proxy (inclusive o da Vercel) guarda essas respostas.
+- A resposta do `enroll` (que traz o token) leva `Cache-Control: no-store`.
+- O cliente (`src/api/client.js`) guarda o ETag por instância e limpa ao trocar de token.
+
+### 1.4 Erros
 
 Todo erro tem o mesmo corpo:
 
@@ -138,11 +151,10 @@ O cartão inteiro numa chamada. O Hub resolve **tudo** que é semântica do Gest
 **Parâmetros:** nenhum obrigatório. `If-None-Match: <etag>` → `304` sem corpo quando nada mudou
 (o agente consulta a cada `poll_interval_seconds`; a maioria das respostas deve ser 304).
 
-**ETag** = hash de (`today`, `max(atualizado_em)` global da tabela, versão do de-para, `config_version`).
-O `today` entra porque **na virada do dia os buckets mudam sem nenhuma linha mudar**: a consulta das
-00:01 tem que devolver `200` com as vencidas novas, mesmo sem sync. Dois dispositivos de pessoas
-diferentes podem ter o mesmo ETag; não faz mal, porque cada agente só manda o ETag que ele mesmo recebeu
-— e trocar a pessoa de uma máquina muda a versão do de-para.
+**ETag** = hash de (**id da pessoa**, `today`, `max(atualizado_em)` global da tabela, versão do de-para,
+`config_version`). O `today` entra porque **na virada do dia os buckets mudam sem nenhuma linha mudar**:
+a consulta das 00:01 tem que devolver `200` com as vencidas novas, mesmo sem sync. A pessoa entra porque
+o resto é igual para todo mundo — sem ela, o ETag de uma pessoa revalida a cópia de outra (§1.3).
 
 **Resposta `200`** (cabeçalho `ETag`)
 

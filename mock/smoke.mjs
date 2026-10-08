@@ -67,6 +67,20 @@ try {
   ok(`me/tasks: regras de bucket${syncedToday ? ', Rafael 15 em vencidas+hoje e 146 abertas' : ' (sync de outro dia: contagens livres)'}`);
   const again = await c.getTasks(); assert.deepEqual(again.tasks, d.tasks); ok('me/tasks: ETag/304 reaproveita o corpo');
 
+  // ETag é por pessoa e a resposta é privada (§1.3): o ETag do Caio não serve para o Rafael.
+  for (const path of ['/me/tasks', '/me/config']) {
+    const h = (t, extra = {}) => ({ headers: { Authorization: `Bearer ${t}`, ...extra } });
+    const rc = await fetch(base + path, h('gdt_mock_caio'));
+    const rr = await fetch(base + path, h('gdt_mock_rafael', { 'If-None-Match': rc.headers.get('ETag') }));
+    assert.equal(rr.status, 200, `${path}: ETag de outra pessoa não pode dar 304`);
+    assert.notEqual(rr.headers.get('ETag'), rc.headers.get('ETag'));
+    assert.match(rr.headers.get('Cache-Control'), /private/);
+    assert.match(rr.headers.get('Vary'), /Authorization/);
+    const r304 = await fetch(base + path, h('gdt_mock_rafael', { 'If-None-Match': rr.headers.get('ETag') }));
+    assert.equal(r304.status, 304); assert.match(r304.headers.get('Vary') || '', /Authorization/);
+  }
+  ok('ETag por pessoa; Cache-Control private + Vary: Authorization');
+
   const big = await api('gdt_mock_bianca').getTasks(); assert.ok(big.summary.overdue > 100); ok('cenário pesado (>100 vencidas)');
   const old = await api('gdt_mock_denise').getTasks(); assert.equal(old.sync.stale, true); ok('cenário dado velho');
   const zero = await api('gdt_mock_caio').getTasks(); assert.equal(zero.summary.overdue + zero.summary.due_today, 0); ok('cenário dia limpo');
@@ -87,7 +101,7 @@ try {
   await expectErr(api('gdt_mock_caixa').getTasks(), 'excluded_account');
   await expectErr(api('gdt_mock_fora').getTasks(), 'unavailable');
   await expectErr(api('gdt_mock_velho_agente').getConfig(), 'upgrade_required');
-  ok('erros de token (§1.3)');
+  ok('erros de token (§1.4)');
 
   // Virada do dia sem sync (§3 ETag, §3.1): mesma carteira, buckets novos, ETag diferente.
   const before = api('gdt_mock_rafael'), dayEnd = await before.getTasks();
