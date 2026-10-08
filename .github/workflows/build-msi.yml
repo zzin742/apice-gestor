@@ -42,8 +42,25 @@ jobs:
       - name: Dependências da CLI do Tauri
         run: npm ci
 
+      # O release lê GESTOR_API_BASE em tempo de compilação (src-tauri/src/api.rs, option_env!).
+      # Vem da variável do repo (Settings → Variables), não de segredo: é um endereço, não credencial.
+      # Só exporta se tiver valor — string vazia viraria Some("") e o app chamaria URL quebrada em vez
+      # de responder "endereço não configurado".
       - name: Build do .msi
-        run: npx tauri build --bundles msi
+        shell: pwsh
+        env:
+          API_BASE: ${{ vars.GESTOR_API_BASE }}
+        run: |
+          if ($env:API_BASE) {
+            if ($env:API_BASE -notmatch '^https://') { throw "GESTOR_API_BASE precisa começar com https://" }
+            $env:GESTOR_API_BASE = $env:API_BASE
+            "API do Hub: ``$env:API_BASE``" >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "::warning::GESTOR_API_BASE não definida — este .msi abre, mas responde 'endereço não configurado'. Não serve para a bancada."
+            "⚠️ **GESTOR_API_BASE não definida** — .msi sem endereço do Hub, não serve para a bancada." >> $env:GITHUB_STEP_SUMMARY
+          }
+          npx tauri build --bundles msi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # O tauri-bundler nomeia o .msi como "{productName}_{versão}_{arch}_{idioma}.msi", com acento
       # e espaço ("Ápice Gestor_..."), e não oferece opção de config. Aqui ele vira um nome ASCII
