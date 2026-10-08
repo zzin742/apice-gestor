@@ -48,7 +48,7 @@
         "upgradeCode": "97800a68-cabd-52e3-886a-6d8831965cff"
       },
       "webviewInstallMode": {
-        "type": "embedBootstrapper",
+        "type": "downloadBootstrapper",
         "silent": true
       }
     }
