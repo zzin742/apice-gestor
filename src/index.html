@@ -236,39 +236,22 @@
       <div class="hud" id="hud">
         <div class="card" role="region" aria-label="Minhas tarefas" id="card">
           <div class="c-head">
-            <div class="greet">Bom dia, Rafael<small>Quarta, 7 de outubro</small></div>
-            <div class="c-top"><b>Minhas tarefas</b><span id="stampTxt">atualizado 13:02</span></div>
-            <div class="prog"><div class="lbl"><span>Concluídas hoje</span><b>4 de 12</b></div><div class="bar"><i></i></div></div>
+            <div class="greet"><span id="greetName">Bom dia</span><small id="greetDate"></small></div>
+            <div class="c-top"><b>Minhas tarefas</b><span id="stampTxt">carregando…</span></div>
+            <div class="prog"><div class="lbl"><span>Concluídas hoje</span><b id="progTxt">0 de 0</b></div><div class="bar"><i id="progBar" style="width:0%"></i></div></div>
             <div class="tabs" role="tablist" aria-label="Período">
-              <button role="tab" aria-selected="true" data-tab="hoje" id="tab-hoje">Hoje <span class="c">8</span></button>
+              <button role="tab" aria-selected="true" data-tab="hoje" id="tab-hoje">Hoje <span class="c" id="cHoje">0</span></button>
               <button role="tab" aria-selected="false" data-tab="semana" id="tab-semana">Semana <span class="c" id="cSemana">0</span></button>
               <button role="tab" aria-selected="false" data-tab="todas" id="tab-todas">Todas <span class="c" id="cTodas">0</span></button>
             </div>
           </div>
           <div class="banner" role="status">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 9v4M12 17h.01M10.3 3.9 2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
-            <div><b>Dados de ontem.</b> Última sincronização 05/10, 14:44.</div>
+            <div id="bannerTxt"><b>Dados de ontem.</b></div>
           </div>
 
           <div class="body">
-            <div class="pane on" id="pane-hoje" role="tabpanel" aria-labelledby="tab-hoje">
-              <div class="g v"><h2>Vencidas <span class="c">3</span></h2>
-                <div class="task ov" tabindex="0"><span class="dot"></span><div class="tm"><b>Rescisão — contrato 00482</b><small>MM Mercado · comp. 09/2026</small></div><span class="tag">2d<span class="go">↗</span></span></div>
-                <div class="task ov" tabindex="0"><span class="dot"></span><div class="tm"><b>Aviso de férias — V. Santos</b><small>Padaria Trigo de Ouro</small></div><span class="tag">1d<span class="go">↗</span></span></div>
-                <div class="task ov" tabindex="0"><span class="dot"></span><div class="tm"><b>FGTS — guia competência 09</b><small>Auto Posto Sol</small></div><span class="tag">1d<span class="go">↗</span></span></div>
-              </div>
-              <div class="g"><h2>Hoje <span class="c">9</span></h2>
-                <div class="task" tabindex="0"><span class="dot"></span><div class="tm"><b>Admissão — novo empregado</b><small>Clínica Vida · entrada hoje</small></div><span class="tag">17h<span class="go">↗</span></span></div>
-                <div class="task" tabindex="0"><span class="dot"></span><div class="tm"><b>eSocial — evento S-2200</b><small>Transportes RT</small></div><span class="tag">17h<span class="go">↗</span></span></div>
-                <div class="task" tabindex="0"><span class="dot"></span><div class="tm"><b>DCTFWeb — competência 09</b><small>Construtora Álamo</small></div><span class="tag">18h<span class="go">↗</span></span></div>
-                <div class="task" tabindex="0"><span class="dot"></span><div class="tm"><b>GPS — guia competência 09</b><small>Farmácia Central</small></div><span class="tag">16h<span class="go">↗</span></span></div>
-                <div class="task" tabindex="0"><span class="dot"></span><div class="tm"><b>Folha mensal — fechamento</b><small>Hotel Mirante</small></div><span class="tag">18h<span class="go">↗</span></span></div>
-                <div class="task ok" tabindex="0"><span class="dot"></span><div class="tm"><b>Cálculo de férias — J. Lima</b><small>Mercado União</small></div><span class="tag">ok<span class="go">↗</span></span></div>
-                <div class="task ok" tabindex="0"><span class="dot"></span><div class="tm"><b>Afastamento — benefício INSS</b><small>Oficina do Km</small></div><span class="tag">ok<span class="go">↗</span></span></div>
-                <div class="task ok" tabindex="0"><span class="dot"></span><div class="tm"><b>Homologação de rescisão</b><small>Panificadora Sul</small></div><span class="tag">ok<span class="go">↗</span></span></div>
-                <div class="task ok" tabindex="0"><span class="dot"></span><div class="tm"><b>Envio de holerites</b><small>Clínica Vida</small></div><span class="tag">ok<span class="go">↗</span></span></div>
-              </div>
-            </div>
+            <div class="pane on" id="pane-hoje" role="tabpanel" aria-labelledby="tab-hoje"></div>
             <div class="pane" id="pane-semana" role="tabpanel" aria-labelledby="tab-semana"></div>
             <div class="pane" id="pane-todas" role="tabpanel" aria-labelledby="tab-todas">
               <div class="search"><label><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="q" placeholder="Buscar cliente ou tarefa" autocomplete="off"><span class="n" id="qn"></span></label></div>
@@ -282,8 +265,8 @@
         </div>
 
         <button class="cap" id="cap" type="button" aria-expanded="false" aria-controls="card" aria-label="Abrir minhas tarefas">
-          <svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/><circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="47.1" stroke-dashoffset="31.6"/></svg>
-          <span class="t"><em><b>3</b> vencidas</em><s>·</s><span><b>5</b> hoje</span></span>
+          <svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/><circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="47.1" stroke-dashoffset="47.1" id="ringFg"/></svg>
+          <span class="t"><em><b id="capOv">0</b> vencidas</em><s>·</s><span><b id="capHoje">0</b> hoje</span></span>
           <span class="sync" aria-hidden="true"></span>
         </button>
       </div>
@@ -324,86 +307,167 @@
     for(var i=0;i<rows.length;i++){var r=rows[i],neg=r[6].charAt(0)==='-';
       h+='<div class="r"><span>'+(i+1)+'</span><span>'+r[0]+'</span><span>'+r[1]+'</span><span class="num">'+r[2]+'</span><span class="num">'+r[3]+'</span><span class="num'+(i===3?' sel':'')+'">'+r[4]+'</span><span class="num">'+r[5]+'</span><span class="num'+(neg?' neg':'')+'">'+r[6]+'</span></div>';}
     document.getElementById('sheet').innerHTML=h;
-
-    /* ---------- task data (fictional, deterministic) ---------- */
-    var clients=rows.map(function(r){return r[0].replace(' Ltda','')});
-    var tpls=["Rescisão — contrato","Aviso de férias","Cálculo de férias","FGTS — guia","eSocial — evento S-1200","eSocial — evento S-2200","DCTFWeb","Admissão — novo empregado","Afastamento — INSS","Folha mensal — fechamento","Envio de holerites","Homologação de rescisão","GPS — guia","Pró-labore — cálculo"];
-    var DOW=['dom','seg','ter','qua','qui','sex','sáb'],BASE_DOW=3,BASE_DAY=7; // quarta, 7 de outubro
-    function dateOf(d){ // returns {label, dow, day, month}
-      var dow=(BASE_DOW+d)%7; if(dow===6){d+=2;} else if(dow===0){d+=1;} dow=(BASE_DOW+d)%7;
-      var day=BASE_DAY+d,month=10; if(day>31){day-=31;month=11;}
-      return {d:d,dow:dow,day:day,month:month};
-    }
-    var tasks=[
-      {n:"Rescisão — contrato 00482",c:"MM Mercado",d:-2},{n:"Aviso de férias — V. Santos",c:"Padaria Trigo de Ouro",d:-1},{n:"FGTS — guia competência 09",c:"Auto Posto Sol",d:-1},
-      {n:"Admissão — novo empregado",c:"Clínica Vida",d:0},{n:"eSocial — evento S-2200",c:"Transportes RT",d:0},{n:"DCTFWeb — competência 09",c:"Construtora Álamo",d:0},{n:"GPS — guia competência 09",c:"Farmácia Central",d:0},{n:"Folha mensal — fechamento",c:"Hotel Mirante",d:0}
-    ];
-    for(var k=0;k<138;k++){var dd=1+((k*7)%24);tasks.push({n:tpls[(k*3)%tpls.length]+(k%4===0?' — comp. 10/2026':''),c:clients[(k*5)%clients.length],d:dd});}
-    tasks.forEach(function(t){ if(t.d>0){var x=dateOf(t.d);t.d=x.d;t.dow=x.dow;t.day=x.day;t.month=x.month;} });
-    tasks.sort(function(a,b){return a.d-b.d});
-
-    function cap(s){return s.charAt(0).toUpperCase()+s.slice(1)}
-    function tagOf(t){
-      if(t.d<0)return (-t.d)+'d';
-      if(t.d===0)return 'hoje';
-      if(t.d<=7)return DOW[t.dow]+' '+t.day;
-      return (t.day<10?'0':'')+t.day+'/'+(t.month<10?'0':'')+t.month;
-    }
-    function rowHtml(t){
-      var cls='task'+(t.d<0?' ov':(t.d>7?' far':''));
-      return '<div class="'+cls+'" tabindex="0" data-n="'+t.n.toLowerCase()+' '+t.c.toLowerCase()+'"><span class="dot"></span><div class="tm"><b>'+t.n+'</b><small>'+t.c+'</small></div><span class="tag">'+tagOf(t)+'<span class="go">↗</span></span></div>';
-    }
-    // Semana: next 7 days grouped by day
-    var week=tasks.filter(function(t){return t.d>=1&&t.d<=7}),groups={},order=[];
-    week.forEach(function(t){var key=cap(DOW[t.dow])+' '+t.day;if(!groups[key]){groups[key]=[];order.push(key);}groups[key].push(t);});
-    var wh='';order.forEach(function(key){wh+='<div class="g"><h2>'+key+' <span class="c">'+groups[key].length+'</span></h2>'+groups[key].map(rowHtml).join('')+'</div>';});
-    document.getElementById('pane-semana').innerHTML=wh||'<div class="empty">Nada agendado pra semana.</div>';
-    document.getElementById('cSemana').textContent=week.length;
-    // Todas
-    var all=tasks;
-    document.getElementById('todasList').innerHTML=all.map(rowHtml).join('')+'<div class="empty" id="noRes" hidden>Nada com esse nome.</div>';
-    document.getElementById('cTodas').textContent=all.length;
-    var qn=document.getElementById('qn');qn.textContent=all.length+' abertas';
-    document.getElementById('q').addEventListener('input',function(){
-      var v=this.value.trim().toLowerCase(),n=0,rowsEl=document.querySelectorAll('#todasList .task');
-      for(var i=0;i<rowsEl.length;i++){var ok=!v||rowsEl[i].getAttribute('data-n').indexOf(v)>=0;rowsEl[i].hidden=!ok;if(ok)n++;}
-      document.getElementById('noRes').hidden=n>0;qn.textContent=v?(n+' de '+all.length):(all.length+' abertas');
-    });
-
-    /* ---------- tabs ---------- */
-    var tabs=document.querySelectorAll('.tabs [role=tab]');
-    function showTab(id){
-      for(var i=0;i<tabs.length;i++){var on=tabs[i].getAttribute('data-tab')===id;tabs[i].setAttribute('aria-selected',on?'true':'false');}
-      var panes=document.querySelectorAll('.pane');for(var j=0;j<panes.length;j++)panes[j].classList.toggle('on',panes[j].id==='pane-'+id);
-    }
-    document.querySelector('.tabs').addEventListener('click',function(e){var b=e.target.closest('[role=tab]');if(b)showTab(b.getAttribute('data-tab'));});
-
-    /* ---------- "open in Gestta" ---------- */
-    var toast=document.getElementById('toast'),tt=null;
-    function openTask(el){
-      var name=el.querySelector('.tm b').textContent;
-      toast.textContent='Abrindo no Gestta ↗  '+name;toast.classList.add('show');
-      clearTimeout(tt);tt=setTimeout(function(){toast.classList.remove('show')},1600);
-    }
-    document.getElementById('card').addEventListener('click',function(e){var t=e.target.closest('.task');if(t)openTask(t);});
-    document.getElementById('card').addEventListener('keydown',function(e){if(e.key==='Enter'){var t=e.target.closest('.task');if(t)openTask(t);}});
-
-    /* ---------- capsule / modes ---------- */
-    var screen=document.getElementById('screen'),hud=document.getElementById('hud'),capBtn=document.getElementById('cap');
-    var pinned=false,hover=false,clicked=false,canHover=window.matchMedia&&window.matchMedia('(hover:hover) and (pointer:fine)').matches;
-    function render(){var o=pinned||hover||clicked;hud.classList.toggle('open',o);capBtn.setAttribute('aria-expanded',o?'true':'false');}
-    function setMode(m){
-      screen.setAttribute('data-mode',m);pinned=(m==='morning');clicked=false;hover=false;showTab('hoje');
-      document.getElementById('stampTxt').textContent=(m==='stale')?'dados de ontem':'atualizado 13:02';
-      document.getElementById('foot').textContent=(m==='stale')?'ÚLTIMO SYNC 05/10 14:44':'GESTTA · 3×/DIA';
-      var bs=document.querySelectorAll('.seg button');for(var i=0;i<bs.length;i++)bs[i].setAttribute('aria-pressed',bs[i].getAttribute('data-mode')===m?'true':'false');
-      if(m==='morning'){var d=document.querySelector('.auto .drain i');if(d){d.style.animation='none';void d.offsetWidth;d.style.animation='';}}
-      render();
-    }
-    document.querySelector('.seg').addEventListener('click',function(e){var b=e.target.closest('button');if(b)setMode(b.getAttribute('data-mode'));});
-    capBtn.addEventListener('click',function(){if(pinned){pinned=false;}else{clicked=!clicked;}render();});
-    if(canHover){hud.addEventListener('mouseenter',function(){hover=true;render();});hud.addEventListener('mouseleave',function(){hover=false;render();});}
-    document.addEventListener('keydown',function(e){if(e.key==='Escape'){clicked=false;pinned=false;render();}});
-    render();
   })();
+</script>
+<script type="module">
+  import { createClient } from './api/client.js';
+
+  /* ---------- API (mock da Ponte em dev; token virá do keychain pela casca) ---------- */
+  var qs=new URLSearchParams(location.search);
+  var api=createClient({baseUrl:qs.get('api')||'http://127.0.0.1:8787/api/gestor',token:qs.get('token')||'dev'});
+  var cfg={poll_interval_seconds:600,morning:{enabled:true,duration_seconds:10,once_per_day:true,not_before:'07:00'}};
+
+  /* ---------- formatação (dado já resolvido pelo servidor; aqui só texto) ---------- */
+  var DOW=['dom','seg','ter','qua','qui','sex','sáb'];
+  var DOW_LONG=['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+  var MES=['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  function pad(n){return (n<10?'0':'')+n}
+  function ymd(s){var p=s.split('-');return new Date(+p[0],+p[1]-1,+p[2]);}
+  function cap(s){return s.charAt(0).toUpperCase()+s.slice(1)}
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function hhmm(d){return pad(d.getHours())+':'+pad(d.getMinutes())}
+  function ddmm(d){return pad(d.getDate())+'/'+pad(d.getMonth()+1)}
+  function hour(t){var p=t.split(':');return (+p[0])+'h'+(p[1]==='00'?'':p[1]);}
+  function tagOf(t){
+    if(t.status==='done')return 'ok';
+    if(t.bucket==='overdue')return t.days_overdue+'d';
+    if(t.bucket==='today')return t.due_time?hour(t.due_time):'hoje';
+    if(!t.due_date)return 'sem data';
+    var d=ymd(t.due_date);
+    if(t.bucket==='week')return DOW[d.getDay()]+' '+d.getDate();
+    return ddmm(d);
+  }
+  function rowHtml(t){
+    var cls='task'+(t.status==='done'?' ok':t.bucket==='overdue'?' ov':t.bucket==='later'?' far':'');
+    var sub=esc(t.client)+(t.competence?' · comp. '+esc(t.competence.slice(5)+'/'+t.competence.slice(0,4)):'')+(t.status==='impediment'?' · impedida':'');
+    return '<div class="'+cls+'" tabindex="0" data-id="'+esc(t.id)+'" data-n="'+esc((t.title+' '+t.client).toLowerCase())+'"><span class="dot"></span><div class="tm"><b>'+esc(t.title)+'</b><small>'+sub+'</small></div><span class="tag">'+tagOf(t)+'<span class="go">↗</span></span></div>';
+  }
+  function group(title,list,cls){return '<div class="g'+(cls?' '+cls:'')+'"><h2>'+title+' <span class="c">'+list.length+'</span></h2>'+list.map(rowHtml).join('')+'</div>';}
+
+  /* ---------- render ---------- */
+  var byId={},all=[],data=null,stale=false;
+  function render(d){
+    if(!d)return; // 304: nada mudou
+    data=d;byId={};d.tasks.forEach(function(t){byId[t.id]=t;});
+    var s=d.summary,today=ymd(d.today);
+    document.getElementById('greetName').textContent='Bom dia, '+d.person.first_name;
+    document.getElementById('greetDate').textContent=DOW_LONG[today.getDay()]+', '+today.getDate()+' de '+MES[today.getMonth()];
+    // cápsula e progresso
+    document.getElementById('capOv').textContent=s.overdue;
+    document.getElementById('capHoje').textContent=s.due_today;
+    var pct=s.today_total?s.done_today/s.today_total:0;
+    document.getElementById('ringFg').setAttribute('stroke-dashoffset',(47.1*(1-pct)).toFixed(1));
+    document.getElementById('progTxt').textContent=s.done_today+' de '+s.today_total;
+    document.getElementById('progBar').style.width=Math.round(pct*100)+'%';
+    // Hoje = vencidas + hoje
+    var ov=d.tasks.filter(function(t){return t.bucket==='overdue'}),hj=d.tasks.filter(function(t){return t.bucket==='today'});
+    hj=hj.filter(function(t){return t.status!=='done'}).concat(hj.filter(function(t){return t.status==='done'}));
+    document.getElementById('cHoje').textContent=s.overdue+s.due_today;
+    document.getElementById('pane-hoje').innerHTML=(ov.length?group('Vencidas',ov,'v'):'')+(hj.length?group('Hoje',hj):'')||'<div class="empty">Nada pra hoje.</div>';
+    // Semana, por dia
+    var week=d.tasks.filter(function(t){return t.bucket==='week'}),groups={},order=[];
+    week.forEach(function(t){if(!groups[t.due_date]){groups[t.due_date]=[];order.push(t.due_date);}groups[t.due_date].push(t);});
+    order.sort();
+    document.getElementById('pane-semana').innerHTML=order.map(function(k){var x=ymd(k);return group(cap(DOW[x.getDay()])+' '+x.getDate(),groups[k]);}).join('')||'<div class="empty">Nada agendado pra semana.</div>';
+    document.getElementById('cSemana').textContent=week.length;
+    // Todas = não concluídas
+    all=d.tasks.filter(function(t){return t.status!=='done'});
+    document.getElementById('todasList').innerHTML=all.map(rowHtml).join('')+'<div class="empty" id="noRes" hidden>Nada com esse nome.</div>';
+    document.getElementById('cTodas').textContent=s.open_total;
+    filter();
+    // frescor
+    var last=new Date(d.sync.last_sync_at);
+    stale=!!d.sync.stale;
+    var dias=Math.round((today-new Date(last.getFullYear(),last.getMonth(),last.getDate()))/864e5);
+    var quando=dias===0?'das '+hhmm(last):dias===1?'de ontem':'de '+ddmm(last);
+    document.getElementById('stampTxt').textContent=stale?'dados '+quando:'atualizado '+hhmm(last);
+    document.getElementById('bannerTxt').innerHTML='<b>Dados '+quando+'.</b> Última sincronização '+ddmm(last)+', '+hhmm(last)+'.';
+    document.getElementById('foot').textContent=stale?'ÚLTIMO SYNC '+ddmm(last)+' '+hhmm(last):'GESTTA · 3×/DIA';
+    applyMode();
+  }
+  function fail(err){
+    // sem resposta do Hub: se já temos dado, ele vira "velho"; se não, avisa sem inventar números
+    console.warn('gestor api',err&&err.code,err);
+    stale=true;
+    if(!data){
+      document.getElementById('stampTxt').textContent='sem conexão';
+      document.getElementById('bannerTxt').innerHTML='<b>Sem conexão com o Hub.</b> Tentando de novo.';
+      document.getElementById('foot').textContent='SEM SYNC';
+    }
+    applyMode();
+  }
+  function load(){return api.getTasks().then(render,fail);}
+
+  /* ---------- busca (Todas) ---------- */
+  var q=document.getElementById('q'),qn=document.getElementById('qn');
+  function filter(){
+    var v=q.value.trim().toLowerCase(),n=0,rowsEl=document.getElementById('todasList').children;
+    for(var i=0;i<rowsEl.length;i++){var el=rowsEl[i];if(!el.classList.contains('task'))continue;var ok=!v||el.getAttribute('data-n').indexOf(v)>=0;el.hidden=!ok;if(ok)n++;}
+    var nr=document.getElementById('noRes');if(nr)nr.hidden=n>0;
+    var tot=data?data.summary.open_total:all.length;
+    qn.textContent=v?(n+' de '+all.length):(data&&data.truncated?'mostrando '+all.length+' de '+tot:tot+' abertas');
+  }
+  q.addEventListener('input',filter);
+
+  /* ---------- tabs ---------- */
+  var tabs=document.querySelectorAll('.tabs [role=tab]');
+  function showTab(id){
+    for(var i=0;i<tabs.length;i++){var on=tabs[i].getAttribute('data-tab')===id;tabs[i].setAttribute('aria-selected',on?'true':'false');}
+    var panes=document.querySelectorAll('.pane');for(var j=0;j<panes.length;j++)panes[j].classList.toggle('on',panes[j].id==='pane-'+id);
+  }
+  document.querySelector('.tabs').addEventListener('click',function(e){var b=e.target.closest('[role=tab]');if(b)showTab(b.getAttribute('data-tab'));});
+
+  /* ---------- abrir no Gestta (só leitura: só abre o link) ---------- */
+  var toast=document.getElementById('toast'),tt=null;
+  function openTask(el){
+    var t=byId[el.getAttribute('data-id')];if(!t)return;
+    toast.textContent='Abrindo no Gestta ↗  '+t.title;toast.classList.add('show');
+    clearTimeout(tt);tt=setTimeout(function(){toast.classList.remove('show')},1600);
+    if(t.gestta_url)window.open(t.gestta_url,'_blank','noopener');
+  }
+  document.getElementById('card').addEventListener('click',function(e){var t=e.target.closest('.task');if(t)openTask(t);});
+  document.getElementById('card').addEventListener('keydown',function(e){if(e.key==='Enter'){var t=e.target.closest('.task');if(t)openTask(t);}});
+
+  /* ---------- cápsula / estados ---------- */
+  // Estados: normal ("idle"), dado velho ("stale", decidido pelo servidor), bom-dia ("morning", uma vez por sessão).
+  // Dado velho tem prioridade: o cartão não cobra com informação defasada.
+  var screen=document.getElementById('screen'),hud=document.getElementById('hud'),capBtn=document.getElementById('cap');
+  var pinned=false,hover=false,clicked=false,morning=false,forced=null,mt=null;
+  var canHover=window.matchMedia&&window.matchMedia('(hover:hover) and (pointer:fine)').matches;
+  function paint(){var o=pinned||hover||clicked;hud.classList.toggle('open',o);capBtn.setAttribute('aria-expanded',o?'true':'false');}
+  function applyMode(){
+    var m=forced||(stale?'stale':morning?'morning':'idle');
+    screen.setAttribute('data-mode',m);
+    var bs=document.querySelectorAll('.seg button');for(var i=0;i<bs.length;i++)bs[i].setAttribute('aria-pressed',bs[i].getAttribute('data-mode')===m?'true':'false');
+  }
+  function goodMorning(){
+    morning=true;pinned=true;clicked=false;hover=false;showTab('hoje');applyMode();paint();
+    var d=document.querySelector('.auto .drain i');if(d){d.style.animation='none';void d.offsetWidth;d.style.animation='';}
+    clearTimeout(mt);mt=setTimeout(endMorning,(cfg.morning.duration_seconds||10)*1000);
+  }
+  function endMorning(){clearTimeout(mt);if(!morning)return;morning=false;pinned=false;applyMode();paint();}
+  // seletor "Situação simulada" do protótipo: força o estado para revisão visual
+  document.querySelector('.seg').addEventListener('click',function(e){
+    var b=e.target.closest('button');if(!b)return;var m=b.getAttribute('data-mode');
+    endMorning();forced=(m==='idle')?null:m;
+    if(m==='morning'){forced=null;goodMorning();}else{applyMode();paint();}
+  });
+  capBtn.addEventListener('click',function(){if(pinned){endMorning();}else{clicked=!clicked;}paint();});
+  if(canHover){hud.addEventListener('mouseenter',function(){hover=true;paint();});hud.addEventListener('mouseleave',function(){hover=false;paint();});}
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'){clicked=false;endMorning();paint();}});
+
+  /* ---------- início ---------- */
+  // Bom-dia: uma vez ao abrir o agente (= início da sessão do Windows, via autostart),
+  // respeitando me/config: enabled, once_per_day, not_before.
+  function morningDue(){
+    var m=cfg.morning;if(!m||!m.enabled||!data)return false;
+    var now=new Date();if(m.not_before&&hhmm(now)<m.not_before)return false;
+    if(m.once_per_day){try{if(localStorage.getItem('bomdia')===data.today)return false;localStorage.setItem('bomdia',data.today);}catch(e){}}
+    return true;
+  }
+  var timer=null;
+  function schedule(){clearInterval(timer);timer=setInterval(load,Math.max(60,cfg.poll_interval_seconds||600)*1000);}
+  api.getConfig().then(function(c){if(c)cfg=c;},function(err){console.warn('gestor config',err&&err.code);})
+    .then(load).then(function(){schedule();if(morningDue())goodMorning();});
+  paint();
 </script>
