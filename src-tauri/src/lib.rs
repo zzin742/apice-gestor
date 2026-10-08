@@ -94,10 +94,15 @@ pub fn usar_console_do_pai() {
 }
 
 /// Só no Windows de verdade (build de release): nunca grava item de login no Mac de desenvolvimento.
+/// Elevado, não liga: o plugin tentaria HKLM primeiro (início para todos os usuários da máquina);
+/// sem elevação ele cai em HKCU, só o colaborador.
 fn ligar_autostart(app: &tauri::App) {
     #[cfg(all(windows, not(debug_assertions)))]
     {
         use tauri_plugin_autostart::ManagerExt;
+        if elevado() {
+            return;
+        }
         let autostart = app.autolaunch();
         if !autostart.is_enabled().unwrap_or(true) {
             let _ = autostart.enable();
@@ -105,6 +110,31 @@ fn ligar_autostart(app: &tauri::App) {
     }
     #[cfg(not(all(windows, not(debug_assertions))))]
     let _ = app;
+}
+
+/// O processo está rodando como administrador (UAC elevado)?
+#[cfg(all(windows, not(debug_assertions)))]
+fn elevado() -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    unsafe {
+        let mut token = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elevacao = TOKEN_ELEVATION { TokenIsElevated: 0 };
+        let mut tamanho = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            (&mut elevacao as *mut TOKEN_ELEVATION).cast(),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut tamanho,
+        );
+        CloseHandle(token);
+        ok != 0 && elevacao.TokenIsElevated != 0
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
