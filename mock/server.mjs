@@ -2,13 +2,14 @@
 // Uso: npm run mock   (MOCK_PORT=8787, MOCK_NOW=2026-10-08T13:02 opcionais)
 import http from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
-import { PEOPLE, TOKENS, CODES, now, spDate, spInstant, buildTasks, businessHoursBetween, robotRun } from './data.mjs';
+import { PEOPLE, TOKENS, CODES, now, spDate, spInstant, buildTasks, classify, businessHoursBetween, robotRun, ROBOT_RUNS } from './data.mjs';
 
 const PORT = Number(process.env.MOCK_PORT || 8787);
 const HOST = process.env.MOCK_HOST || '127.0.0.1';
 const API = 1;
 const STALE_AFTER_BUSINESS_HOURS = 6; // horas úteis, seg–sex 08–18 (§3.5)
 const CONFIG_VERSION = 'c-mock-1';
+const DEPARA_VERSION = 'dp-mock-1'; // versão do de-para dispositivo → pessoa → nome no Gestta
 
 // Estado em memória (some ao reiniciar): tokens emitidos por enroll e últimos heartbeats.
 const issued = new Map();   // token → person key
@@ -48,9 +49,9 @@ function fail(res, code) {
     RETRY[code] ? { 'Retry-After': String(RETRY[code]) } : {});
 }
 
-// Responde 304 se o ETag bater; o ETag ignora `generated_at`, que muda a cada chamada.
-function sendCached(req, res, body, stableBody) {
-  const etag = '"' + createHash('sha1').update(JSON.stringify(stableBody)).digest('hex').slice(0, 20) + '"';
+// Responde 304 se o ETag bater. `parts` é o que define o ETag (contrato §3 e §4).
+function sendCached(req, res, body, parts) {
+  const etag = '"' + createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 20) + '"';
   if (req.headers['if-none-match'] === etag) return send(res, 304, undefined, { ETag: etag });
   send(res, 200, body, { ETag: etag, 'Cache-Control': 'no-cache' });
 }
@@ -76,6 +77,8 @@ function personOut(p) {
 }
 
 function lastSync(p, n) {
+  // No Hub, last_sync_at é o max(atualizado_em) GLOBAL — um sync vale para todos (§3.1). No mock,
+  // o cenário "velho" vive num token só para dar para testar sem derrubar os outros.
   // Rodadas fixas às 07, 10, 13 e 16h. Normal: a última que já passou.
   // Cenário "velho": o robô parou, como em 05/10 — a última rodada que deu certo fica a mais de
   // 2× o limite em horas úteis (contar rodadas não basta: segunda cedo cairia no fim de semana).
@@ -90,8 +93,10 @@ function tasksBody(key) {
   const p = PEOPLE[key];
   const n = now();
   const today = spDate(n);
-  const tasks = buildTasks(p, today);
   const synced = lastSync(p, n);
+  // A carteira é a do último sync; os buckets são de agora. À 00:01, sem sync novo, o "hoje" de
+  // ontem vira vencida e as concluídas de ontem saem do cartão.
+  const tasks = classify(buildTasks(p, spDate(synced)), today);
   const count = (f) => tasks.filter(f).length;
   const summary = {
     overdue: count((t) => t.bucket === 'overdue'),
@@ -112,7 +117,9 @@ function tasksBody(key) {
     },
     summary, tasks, truncated: false,
   };
-  return { stable, body: { api: API, generated_at: spInstant(n), ...stable } };
+  // ETag = hash(today, max(atualizado_em) global, versão do de-para, config_version) — §3.
+  const etagParts = [today, stable.sync.last_sync_at, DEPARA_VERSION, CONFIG_VERSION];
+  return { etagParts, body: { api: API, generated_at: spInstant(n), ...stable } };
 }
 
 function configBody(key) {
@@ -125,6 +132,7 @@ function configBody(key) {
     default_tab: 'hoje',
     morning: { enabled: true, duration_seconds: 10, once_per_day: true, not_before: '07:00' },
     stale_after_business_hours: STALE_AFTER_BUSINESS_HOURS,
+    sync_times: ROBOT_RUNS.map((h) => `${String(h).padStart(2, '0')}:00`),
     poll_interval_seconds: 600,
     heartbeat_interval_seconds: 900,
     notice: p.stale ? { level: 'warn', text: 'A sincronização com o Gestta está atrasada. Os dados podem não refletir baixas recentes.' } : null,
@@ -153,8 +161,8 @@ const routes = {
 
   'GET /api/gestor/me/tasks': (req, res) => {
     const a = auth(req, res); if (!a) return;
-    const { stable, body } = tasksBody(a.key);
-    sendCached(req, res, body, stable);
+    const { etagParts, body } = tasksBody(a.key);
+    sendCached(req, res, body, etagParts);
   },
 
   'GET /api/gestor/me/config': (req, res) => {

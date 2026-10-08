@@ -38,7 +38,7 @@ qualquer dado novo que a interface precisar vira campo novo aqui, combinado com 
 
 ### 1.2 Autenticação por token de dispositivo
 
-- O token sai **uma vez**, na resposta do `enroll`. O Hub guarda só o **hash** dele.
+- O token sai **uma vez**, na resposta do `enroll`. O Hub guarda só o **hash SHA-256** dele.
 - O agente guarda o token no **Windows Credential Manager** (keychain), nunca em arquivo texto,
   nunca em log. No Mac de desenvolvimento, no Keychain.
 - Envio: `Authorization: Bearer <token>`.
@@ -60,7 +60,7 @@ Todo erro tem o mesmo corpo:
 | HTTP | `code` | Quando | O que o agente faz |
 |---|---|---|---|
 | 400 | `invalid_request` | corpo/parâmetro malformado | loga (sem token) e não repete |
-| 400 | `invalid_code` | código de enrolamento não existe | pede o código de novo |
+| 400 | `invalid_code` | código de enrolamento não existe | pede o código de novo; **nunca repete sozinho** (§2) |
 | 410 | `code_expired` | código passou da validade (sugestão: 24 h) | pede código novo ao admin |
 | 409 | `code_used` | código já trocado por token | pede código novo ao admin |
 | 401 | `unauthorized` | sem token / token desconhecido | volta ao enrolamento |
@@ -68,7 +68,7 @@ Todo erro tem o mesmo corpo:
 | 403 | `excluded_account` | a pessoa do dispositivo é conta-caixa (lista "contas que não são pessoa") | mostra a mensagem; não busca tarefas |
 | 409 | `person_not_mapped` | dispositivo existe mas o de-para pessoa → nome no Gestta não está feito | mostra "aguardando configuração" e tenta de novo em `retry_after_seconds` |
 | 426 | `upgrade_required` | versão do agente/API abaixo do mínimo | força o updater |
-| 429 | `rate_limited` | chamadas demais | espera `retry_after_seconds` |
+| 429 | `rate_limited` | chamadas demais | espera **no mínimo** `retry_after_seconds` |
 | 503 | `unavailable` | Hub ou banco dos robôs fora | mantém o último dado, marca a cápsula como sem conexão, tenta de novo |
 | 500 | `server_error` | qualquer outra falha | idem 503 |
 
@@ -117,7 +117,17 @@ Sem `Authorization`.
 ```
 
 Erros possíveis: `invalid_request`, `invalid_code`, `code_expired`, `code_used`, `excluded_account`, `rate_limited`.
-O Hub deve limitar tentativas por IP (sugestão: 10/min) — o código é curto.
+
+**Regras do código (aprovadas pelo Farol, 08/10/2026):**
+
+- Validade de **24 h**, **uso único**.
+- Limite de **10 tentativas por minuto por IP**. O contador vive numa **tabela do Hub**, não em memória
+  (a Vercel tem várias instâncias e reinicia).
+- ⚠️ **Os 95 PCs saem pelo mesmo IP do escritório.** Por isso o instalador:
+  - respeita `retry_after_seconds` do `429` antes de tentar de novo;
+  - **nunca repete `invalid_code`, `code_expired` ou `code_used` em laço** — só tenta de novo com
+    um código **novo digitado** pela pessoa. Um instalador em laço esgota o limite do escritório
+    inteiro.
 
 ---
 
@@ -127,6 +137,12 @@ O cartão inteiro numa chamada. O Hub resolve **tudo** que é semântica do Gest
 
 **Parâmetros:** nenhum obrigatório. `If-None-Match: <etag>` → `304` sem corpo quando nada mudou
 (o agente consulta a cada `poll_interval_seconds`; a maioria das respostas deve ser 304).
+
+**ETag** = hash de (`today`, `max(atualizado_em)` global da tabela, versão do de-para, `config_version`).
+O `today` entra porque **na virada do dia os buckets mudam sem nenhuma linha mudar**: a consulta das
+00:01 tem que devolver `200` com as vencidas novas, mesmo sem sync. Dois dispositivos de pessoas
+diferentes podem ter o mesmo ETag; não faz mal, porque cada agente só manda o ETag que ele mesmo recebeu
+— e trocar a pessoa de uma máquina muda a versão do de-para.
 
 **Resposta `200`** (cabeçalho `ETag`)
 
@@ -138,7 +154,7 @@ O cartão inteiro numa chamada. O Hub resolve **tudo** que é semântica do Gest
   "person": { "id": "pes_rafael", "display_name": "Rafael Moura", "first_name": "Rafael", "department": "Pessoal" },
   "sync": {
     "source": "gestta",
-    "last_sync_at": "2026-10-08T12:47:03-03:00",
+    "last_sync_at": "2026-10-08T13:04:00-03:00",
     "stale": false,
     "stale_after_business_hours": 6
   },
@@ -162,8 +178,9 @@ O cartão inteiro numa chamada. O Hub resolve **tudo** que é semântica do Gest
       "due_date": "2026-10-06",
       "due_time": null,
       "days_overdue": 2,
+      "done_date": null,
       "done_at": null,
-      "gestta_url": "https://app.gestta.com.br/…/8812734"
+      "gestta_url": "https://app.gestta.com.br/#/sidebar/task/8812734"
     }
   ],
   "truncated": false
@@ -178,16 +195,18 @@ de-para *dispositivo → pessoa do Hub → nome no Gestta* (`tarefa_responsavel`
 | Regra | Origem |
 |---|---|
 | Entra quem tem `tarefa_status ∈ {OPEN, IMPEDIMENT}` → `status: "open"` / `"impediment"` | §3.3 |
-| Entra `DONE` **só se concluída hoje** → `status: "done"`, `bucket: "today"`, com `done_at` | ponto verde |
+| Entra `DONE` **só se `done_date = today`** → `status: "done"`, `bucket: "today"`. O Gestta só dá o **dia** da conclusão; não depende de `gestor_snapshots` | ponto verde; Farol 08/10 |
 | `DISCONSIDERED` nunca entra | §3.3 |
 | `cliente_ativo = false` nunca entra (ruído) | §3.3 |
 | Conta-caixa nunca recebe tarefas (`403 excluded_account`) | §3.1, §4 |
-| `bucket = "overdue"` se aberta e `tarefa_datameta < today` | §3.3 |
+| `bucket = "overdue"` se aberta e `tarefa_datameta < today` — e só isso. A flag **`Atrasada?`** do Gestta é **ignorada** | §3.3; Farol 08/10 |
 | `bucket = "today"` se `tarefa_datameta = today` (aberta ou concluída hoje) | |
 | `bucket = "week"` se aberta e `today < tarefa_datameta ≤ today + 7` (dias corridos) | |
 | `bucket = "later"` se aberta e `tarefa_datameta > today + 7`, ou sem data | |
-| `sync.last_sync_at` = `max(atualizado_em)` das linhas lidas (não o horário da consulta) | §3.3 |
+| `sync.last_sync_at` = `max(atualizado_em)` **global da tabela `tarefas`** — não das linhas da pessoa. Um sync vale para todos; com rodadas incrementais, quem não teve tarefa mexida apareceria como velho com o robô saudável | §3.3; Farol 08/10 |
 | `sync.stale` = horas úteis entre `last_sync_at` e agora `> stale_after_business_hours` (ver §3.5) | guarda de dado velho |
+| `due_date` = `tarefa_datameta` como **data de calendário em São Paulo**. O banco dos robôs grava sem fuso e o servidor roda em UTC: **a conversão é do Hub** | Farol 08/10 |
+| `department` = `empresa_departamento` do Gestta, passado pelo de-para para o nome do Hub | Farol 08/10 |
 
 **Vencida e hoje são calculadas no momento da consulta, nunca no momento do sync.** `today` é a data
 de São Paulo no instante em que o Hub responde; `bucket` e `days_overdue` saem de `tarefa_datameta`
@@ -209,8 +228,8 @@ lidas, não os buckets; nenhum cache atravessa a meia-noite com `today` velho.
   (`today_total = overdue + due_today + done_today`).
 - **Busca da aba Todas:** local, sobre `title` + `client`. Não há rota de busca.
 - **Ordem:** `tasks` chega ordenado por `due_date` asc, `due_time` asc (nulos no fim), `client`.
-- **Etiqueta da linha:** `overdue` → `"{days_overdue}d"`; `today` com `due_time` → `"17h"`, sem →
-  `"hoje"`; `done` → `"ok"`; `week` → `"qui 9"`; `later` → `"09/11"`.
+- **Etiqueta da linha:** `overdue` → `"{days_overdue}d"`; `today` → `"hoje"` (com `due_time`,
+  que na v1 é sempre null, seria `"17h"`); `done` → `"ok"`; `week` → `"qui 9"`; `later` → `"09/11"`.
 - **Clicar na linha:** abre `gestta_url` no navegador padrão. O agente não monta URL.
 
 ### 3.3 Campos da tarefa
@@ -220,15 +239,16 @@ lidas, não os buckets; nenhum cache atravessa a meia-noite com `today` velho.
 | `id` | string | `tarefa_id` do Gestta, como texto |
 | `title` | string | nome da tarefa no Gestta |
 | `client` | string | nome do cliente, já sem "Ltda"/sufixos se o Hub quiser encurtar |
-| `department` | string | departamento da tarefa, já no nome do Hub (de-para Gestta × Onvio resolvido): `Pessoal`, `Fiscal`, `Contábil`, `Legalização`… |
-| `competence` | `"YYYY-MM"` \| null | competência, quando existir |
+| `department` | string | `empresa_departamento` do Gestta, já no nome do Hub (de-para resolvido): `Pessoal`, `Fiscal`, `Contábil`, `Legalização`… |
+| `competence` | `"YYYY-MM"` \| null | o relatório do Gestta não tem coluna de competência; o Hub tenta uma das 32 colunas ou regex no título, senão `null`. **O agente nunca interpreta o título** |
 | `status` | `open` \| `impediment` \| `done` | `impediment` é aberta, com selo "impedida" |
 | `bucket` | `overdue` \| `today` \| `week` \| `later` | regra em §3.1 |
-| `due_date` | `YYYY-MM-DD` \| null | `tarefa_datameta` |
-| `due_time` | `HH:MM` \| null | se o Gestta tiver hora na meta |
+| `due_date` | `YYYY-MM-DD` \| null | `tarefa_datameta`, data de calendário em São Paulo (conversão do Hub) |
+| `due_time` | `HH:MM` \| null | **sempre `null` na v1**: a meta do Gestta é só dia. Fica no contrato para não quebrar se um dia vier hora |
 | `days_overdue` | int | 0 se não vencida; dias corridos |
-| `done_at` | instante \| null | só em `done` |
-| `gestta_url` | string | link direto para a tarefa |
+| `done_date` | `YYYY-MM-DD` \| null | **garantido em `status: done`**; `null` nos outros |
+| `done_at` | instante \| null | opcional; `null` quando o Gestta só tem o dia (o caso da v1) |
+| `gestta_url` | string | link direto para a tarefa, montado pelo Hub. ⚠️ **Formato ainda é placeholder**: o Gestta é SPA AngularJS com rota em hash; o mock usa `https://app.gestta.com.br/#/sidebar/task/<id>`. O Farol confirma abrindo uma tarefa numa sessão logada antes de implementar |
 
 ### 3.4 Volume
 
@@ -254,7 +274,8 @@ já estão fora por regra.
 ## 4. `GET /api/gestor/me/config`
 
 O que a tela *Configurações do agente* do Hub decidiu para esta máquina, já com a precedência
-**pessoa > departamento > geral** resolvida. O agente busca ao iniciar, quando o heartbeat disser que
+**pessoa > departamento > geral** resolvida. O departamento dessa precedência é o **da pessoa no Hub**
+(de-para), não o das tarefas dela. O agente busca ao iniciar, quando o heartbeat disser que
 mudou (`config_version`) e, no mínimo, a cada hora. Suporta `ETag`/`304`.
 
 **Resposta `200`**
@@ -268,6 +289,7 @@ mudou (`config_version`) e, no mínimo, a cada hora. Suporta `ETag`/`304`.
   "default_tab": "hoje",
   "morning": { "enabled": true, "duration_seconds": 10, "once_per_day": true, "not_before": "07:00" },
   "stale_after_business_hours": 6,
+  "sync_times": ["07:00", "10:00", "13:00", "16:00"],
   "poll_interval_seconds": 600,
   "heartbeat_interval_seconds": 900,
   "notice": null,
@@ -281,6 +303,7 @@ mudou (`config_version`) e, no mínimo, a cada hora. Suporta `ETag`/`304`.
 | `tabs` | abas visíveis, na ordem; sempre contém `default_tab` |
 | `morning` | bom-dia ao iniciar a sessão do Windows: aberto por `duration_seconds`, no máximo 1×/dia se `once_per_day`, e só depois de `not_before` (hora local) |
 | `stale_after_business_hours` | o mesmo valor de `sync.stale_after_business_hours`, em **horas úteis** (§3.5) — a decisão de "velho" é do servidor; aqui é só para o texto do aviso |
+| `sync_times` | horários das rodadas do robô (`HH:MM`, São Paulo), cadastrados na administração do Hub. A interface monta o rodapé a partir dele (`length` → "4×/DIA"), sem número fixo no HTML. Lista vazia = horário desconhecido: o rodapé não fala de cadência. Informativo: não entra na conta de `stale`. O agente **pode** buscar `me/tasks` alguns minutos depois de cada horário, **além** do `poll_interval_seconds`, nunca no lugar dele: a virada do dia e a passagem para "velho" acontecem sem sync |
 | `poll_interval_seconds` | intervalo de `GET me/tasks` (mínimo aceito pelo agente: 60) |
 | `heartbeat_interval_seconds` | intervalo do heartbeat (mínimo: 300) |
 | `notice` | `null` ou `{ "level": "info"\|"warn", "text": "…" }` — faixa no topo do cartão |
@@ -323,15 +346,24 @@ Falha de heartbeat **nunca** aparece para o usuário; o agente tenta de novo no 
 
 ---
 
-## 6. Em aberto — para o Farol (via Vigia)
+## 6. Respostas do Farol (08/10/2026) e o que falta
 
-1. **Formato do `gestta_url`.** O banco dos robôs guarda só `tarefa_id`? Qual é a URL de tarefa no
-   Gestta da Ápice? (O mock usa `https://app.gestta.com.br/tarefa/<id>`, que é chute.)
-2. **Data de conclusão.** Existe coluna com o instante do `DONE` em `tarefas`? Sem ela, "concluída
-   hoje" vira "virou DONE desde o snapshot da manhã", e o Hub precisa do `gestor_snapshots` para isso.
-3. **Hora na meta.** `tarefa_datameta` é `date` ou `timestamp`? Define se `due_time` existe.
-4. **Competência.** Há campo de competência ou ela só aparece no nome da tarefa?
-5. **Validade do código de enrolamento** (sugestão 24 h) e limite de tentativas.
+O Farol respondeu sem acesso ao banco dos robôs (`hub_reader` ainda não existe). Já estão no texto:
+
+1. `gestta_url` — rota em hash; placeholder `…/#/sidebar/task/<id>` (§3.3).
+2. Conclusão — só o dia: `done_date` garantido, `done_at` opcional; "concluída hoje" = `done_date = today` (§3.1, §3.3).
+3. `tarefa_datameta` é dia — `due_time` sempre `null` na v1; fuso resolvido pelo Hub (§3.1, §3.3).
+4. Competência — sem coluna; Hub tenta coluna ou regex; agente não interpreta título (§3.3).
+5. Código de enrolamento — 24 h, uso único, 10/min por IP em tabela do Hub (§2).
+
+Ajustes ao desenho, também já no texto: ETag com `today` (§3), `last_sync_at` global (§3.1),
+precedência pelo departamento da pessoa (§4), `department` de `empresa_departamento` (§3.1), flag
+`Atrasada?` ignorada (§3.1). Token `gdt_` com SHA-256, erros e precedência: aprovados sem mudança.
+
+**Ainda falta:**
+- formato real do `gestta_url` (Farol confere numa sessão logada);
+- a lista das 32 colunas de `tarefas`, que vem pelo Diretor — pode mudar a origem de `competence` e
+  de `done_date`.
 
 ---
 

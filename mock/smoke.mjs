@@ -1,5 +1,7 @@
 // Confere o mock contra o contrato: as 4 rotas, os cenários e os erros. Uso: npm run mock:smoke
-// (sobe o servidor sozinho numa porta livre, roda e derruba).
+// (sobe o servidor sozinho numa porta livre, roda e derruba). Relógio padrão: quinta 08/10 13:30;
+// MOCK_NOW=... testa outro horário.
+process.env.MOCK_NOW ||= '2026-10-08T13:30';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
@@ -16,11 +18,16 @@ assert.equal(robotRun(sp('2026-10-08T12:59')).getTime(), sp('2026-10-08T10:04').
 assert.equal(robotRun(sp('2026-10-08T06:59')).getTime(), sp('2026-10-07T16:04').getTime());
 console.log('  ✓ horas úteis e rodadas 07/10/13/16h (§3.5)');
 
-const port = 18787 + Math.floor(Math.random() * 1000);
-const env = { ...process.env, MOCK_PORT: String(port) };
-const srv = spawn(process.execPath, [fileURLToPath(new URL('./server.mjs', import.meta.url))], { env, stdio: ['ignore', 'pipe', 'inherit'] });
-await new Promise((ok) => srv.stdout.once('data', ok));
-const base = `http://127.0.0.1:${port}/api/gestor`;
+const servers = [];
+async function start(mockNow) {
+  const port = 18787 + Math.floor(Math.random() * 20000);
+  const env = { ...process.env, MOCK_PORT: String(port), MOCK_NOW: mockNow };
+  const srv = spawn(process.execPath, [fileURLToPath(new URL('./server.mjs', import.meta.url))], { env, stdio: ['ignore', 'pipe', 'inherit'] });
+  servers.push(srv);
+  await new Promise((ok) => srv.stdout.once('data', ok));
+  return `http://127.0.0.1:${port}/api/gestor`;
+}
+const base = await start(process.env.MOCK_NOW);
 const api = (token) => createClient({ baseUrl: base, token, agentVersion: '0.1.0' });
 const expectErr = async (p, code) => {
   await assert.rejects(p, (e) => e instanceof GestorApiError && e.code === code, `esperava ${code}`);
@@ -40,7 +47,8 @@ try {
   const c = api(e.token);
   const d = await c.getTasks();
   assert.equal(d.api, 1); assert.equal(d.person.display_name, 'Rafael Moura');
-  assert.equal(d.summary.overdue + d.summary.due_today, 15); assert.equal(d.summary.open_total, 146);
+  const syncedToday = d.sync.last_sync_at.slice(0, 10) === d.today;
+  if (syncedToday) { assert.equal(d.summary.overdue + d.summary.due_today, 15); assert.equal(d.summary.open_total, 146); }
   assert.equal(d.sync.stale, false);
   assert.equal(d.today, spDate(now())); // vencida/hoje relativos ao momento da consulta (§3.1)
   assert.match(d.sync.last_sync_at, /T(07|10|13|16):04:00-03:00$/);
@@ -49,11 +57,14 @@ try {
     for (const k of ['id', 'title', 'client', 'department', 'status', 'bucket', 'gestta_url']) assert.ok(t[k], `${k} em ${t.id}`);
     if (t.bucket === 'overdue') assert.ok(t.due_date < d.today && t.days_overdue > 0);
     if (t.bucket === 'today') assert.equal(t.due_date, d.today);
-    if (t.status === 'done') assert.ok(t.done_at);
+    if (t.status === 'done') { assert.equal(t.done_date, d.today); assert.equal(t.done_at, null); }
+    else assert.equal(t.done_date, null);
+    assert.equal(t.due_time, null);
+    assert.match(t.gestta_url, /^https:\/\/app\.gestta\.com\.br\/#\/sidebar\/task\/\d+$/);
   }
   const tabs = tabsOf(d);
   assert.equal(tabs.hoje.overdue.length + tabs.hoje.today.length, d.summary.today_total);
-  ok('me/tasks: Rafael 15 em vencidas+hoje, 146 abertas, regras de bucket');
+  ok(`me/tasks: regras de bucket${syncedToday ? ', Rafael 15 em vencidas+hoje e 146 abertas' : ' (sync de outro dia: contagens livres)'}`);
   const again = await c.getTasks(); assert.deepEqual(again.tasks, d.tasks); ok('me/tasks: ETag/304 reaproveita o corpo');
 
   const big = await api('gdt_mock_bianca').getTasks(); assert.ok(big.summary.overdue > 100); ok('cenário pesado (>100 vencidas)');
@@ -61,7 +72,7 @@ try {
   const zero = await api('gdt_mock_caio').getTasks(); assert.equal(zero.summary.overdue + zero.summary.due_today, 0); ok('cenário dia limpo');
 
   // config
-  const cfg = await c.getConfig(); assert.equal(cfg.default_tab, 'hoje'); assert.equal(cfg.paused, false);
+  const cfg = await c.getConfig(); assert.equal(cfg.default_tab, 'hoje'); assert.deepEqual(cfg.sync_times, ['07:00', '10:00', '13:00', '16:00']); assert.equal(cfg.paused, false);
   assert.equal((await api('gdt_mock_elton').getConfig()).paused, true); ok('me/config (normal e pausado)');
 
   // heartbeat
@@ -77,5 +88,21 @@ try {
   await expectErr(api('gdt_mock_fora').getTasks(), 'unavailable');
   await expectErr(api('gdt_mock_velho_agente').getConfig(), 'upgrade_required');
   ok('erros de token (§1.3)');
+
+  // Virada do dia sem sync (§3 ETag, §3.1): mesma carteira, buckets novos, ETag diferente.
+  const before = api('gdt_mock_rafael'), dayEnd = await before.getTasks();
+  const b2 = await start('2026-10-08T23:59'), b3 = await start('2026-10-09T00:01');
+  const c23 = createClient({ baseUrl: b2, token: 'gdt_mock_rafael' }), d23 = await c23.getTasks();
+  const r23 = await fetch(b2 + '/me/tasks', { headers: { Authorization: 'Bearer gdt_mock_rafael' } });
+  const etag = r23.headers.get('ETag');
+  const r01 = await fetch(b3 + '/me/tasks', { headers: { Authorization: 'Bearer gdt_mock_rafael', 'If-None-Match': etag } });
+  assert.equal(r01.status, 200, 'à 00:01 tem que vir 200, não 304');
+  const d01 = await r01.json();
+  assert.equal(d01.sync.last_sync_at, d23.sync.last_sync_at, 'sem sync novo');
+  assert.equal(d01.summary.overdue, d23.summary.overdue + d23.summary.due_today, 'o hoje de ontem venceu');
+  assert.equal(d01.summary.done_today, 0, 'concluídas de ontem saem');
+  ok('00:01 sem sync: 200, hoje de ontem virou vencida, ETag mudou');
+  void dayEnd;
+
   console.log(`\nMock OK — ${n} verificações.`);
-} finally { srv.kill(); }
+} finally { servers.forEach((s) => s.kill()); }

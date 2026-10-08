@@ -68,8 +68,9 @@ const TEMPLATES = {
   ],
 };
 
-// Monta a carteira de uma pessoa: n tarefas por faixa, relativo a `today`.
-// counts = { overdue, today, done, week, later }, open_total = overdue + today + week + later.
+// Monta a carteira de uma pessoa como o robô a deixou no último sync: n tarefas por faixa,
+// relativo a `today` = dia do sync. `bucket` daqui é provisório — quem decide é classify(),
+// na hora da consulta (§3.1). counts = { overdue, today, done, week, later }.
 export function buildTasks(person, today) {
   const r = rng(person.seed);
   const pick = (arr) => arr[Math.floor(r() * arr.length)];
@@ -93,10 +94,11 @@ export function buildTasks(person, today) {
       department: r() < 0.92 ? person.department : pick(Object.keys(TEMPLATES)),
       competence,
       status: 'open', bucket, due_date,
-      due_time: r() < 0.3 ? pick(['12:00', '16:00', '17:00', '18:00']) : null,
+      due_time: null, // v1: a meta do Gestta é só dia
       days_overdue: offset !== null && offset < 0 ? -offset : 0,
-      done_at: null,
-      gestta_url: `https://app.gestta.com.br/tarefa/${id}`,
+      done_date: null,
+      done_at: null, // v1: o Gestta só dá o dia da conclusão
+      gestta_url: `https://app.gestta.com.br/#/sidebar/task/${id}`, // placeholder até o Farol confirmar
       ...extra,
     });
   }
@@ -104,16 +106,12 @@ export function buildTasks(person, today) {
   // Vencidas: maioria recente, cauda longa até ~90 dias.
   for (let i = 0; i < person.counts.overdue; i++) make('overdue', -(1 + Math.floor(r() ** 2.2 * 90)));
   for (let i = 0; i < person.counts.today; i++) make('today', 0);
-  for (let i = 0; i < person.counts.done; i++) {
-    const h = 8 + Math.floor(r() * 5), mi = Math.floor(r() * 60);
-    make('today', 0, { status: 'done', done_at: `${today}T${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}:00${TZ_OFFSET}` });
-  }
+  for (let i = 0; i < person.counts.done; i++) make('today', 0, { status: 'done', done_date: today });
   for (let i = 0; i < person.counts.week; i++) make('week', 1 + Math.floor(r() * 7));
   for (let i = 0; i < person.counts.later; i++) make('later', r() < 0.04 ? null : 8 + Math.floor(r() * 110));
 
   // ~3% das abertas em impedimento (IMPEDIMENT conta como aberta).
   for (const t of out) if (t.status === 'open' && r() < 0.03) t.status = 'impediment';
-  for (const t of out) if (t.status === 'done') t.due_time = null;
 
   out.sort((a, b) =>
     (a.due_date ?? '9999') .localeCompare(b.due_date ?? '9999') ||
@@ -207,4 +205,23 @@ export function robotRun(n, k = 0, minutesAfter = 4) {
     }
   }
   return new Date(runs[k] + SP_MS);
+}
+
+// Vencida / hoje / semana relativos ao momento da CONSULTA, nunca ao sync (contrato §3.1).
+// Concluída só aparece se done_date = today.
+export function classify(tasks, today) {
+  const week = addDays(today, 7);
+  const out = [];
+  for (const t of tasks) {
+    if (t.status === 'done') {
+      if (t.done_date === today) out.push({ ...t, bucket: 'today', days_overdue: 0 });
+      continue;
+    }
+    const d = t.due_date;
+    const bucket = d === null ? 'later' : d < today ? 'overdue' : d === today ? 'today' : d <= week ? 'week' : 'later';
+    const days_overdue = bucket === 'overdue'
+      ? Math.round((Date.parse(today + 'T12:00:00Z') - Date.parse(d + 'T12:00:00Z')) / 86400e3) : 0;
+    out.push({ ...t, bucket, days_overdue });
+  }
+  return out;
 }
