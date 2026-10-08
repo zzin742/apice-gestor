@@ -38,3 +38,12 @@ export function abrirNoNavegador(url) {
   window.open(url, '_blank', 'noopener');
   return Promise.resolve();
 }
+
+// Tamanho da janela da casca em px lógicos (o Chassi cuida do DPI e mantém o canto inferior direito).
+// Fora da casca não há janela: guarda o pedido para revisão no navegador.
+export function ajustarJanela({ largura, altura }) {
+  if (tauri?.core?.invoke) return tauri.core.invoke('painel_tamanho', { largura, altura });
+  globalThis.__painelTamanho = { largura, altura };
+  globalThis.dispatchEvent(new CustomEvent('painel-tamanho', { detail: { largura, altura } }));
+  return Promise.resolve();
+}

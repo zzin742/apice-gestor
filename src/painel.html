@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pt-BR" data-janela>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel do Dia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<link rel="stylesheet" href="painel.css">
+<style>
+  /* Janela da casca: sem fundo, só a cápsula e o cartão no canto inferior direito.
+     A folga em volta é o espaço da sombra (FOLGA em painel.js). */
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden}
+  body{color:var(--ink);font-family:var(--ui)}
+  .hud{position:fixed;left:24px;right:24px;top:12px;bottom:36px}
+  .card{max-width:none}
+  /* Proposta B (Chassi, 08/10): na janela real o blur não enxerga o que está atrás, então o vidro fica opaco.
+     Mudança visual — aguardando o José Luiz via Vigia. O protótipo (index.html) segue translúcido. */
+  :root{--glass:#f7f9fb}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--glass:#1a1e26}}
+  :root[data-theme="dark"]{--glass:#1a1e26}
+</style>
+<body id="screen" data-mode="idle">
+  <div class="hud" id="hud">
+    <div class="card" role="region" aria-label="Minhas tarefas" id="card">
+      <div class="c-head">
+        <div class="greet"><span id="greetName">Bom dia</span><small id="greetDate"></small></div>
+        <div class="c-top"><b>Minhas tarefas</b><span id="stampTxt">carregando…</span></div>
+        <div class="prog"><div class="lbl"><span>Concluídas hoje</span><b id="progTxt">–</b></div><div class="bar"><i id="progBar" style="width:0%"></i></div></div>
+        <div class="tabs" role="tablist" aria-label="Período">
+          <button role="tab" aria-selected="true" data-tab="hoje" id="tab-hoje">Hoje <span class="c" id="cHoje">–</span></button>
+          <button role="tab" aria-selected="false" data-tab="semana" id="tab-semana">Semana <span class="c" id="cSemana">–</span></button>
+          <button role="tab" aria-selected="false" data-tab="todas" id="tab-todas">Todas <span class="c" id="cTodas">–</span></button>
+        </div>
+      </div>
+      <div class="banner" role="status">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 9v4M12 17h.01M10.3 3.9 2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+        <div id="bannerTxt"><b>Dados de ontem.</b></div>
+      </div>
+
+      <div class="body">
+        <div class="pane on" id="pane-hoje" role="tabpanel" aria-labelledby="tab-hoje"></div>
+        <div class="pane" id="pane-semana" role="tabpanel" aria-labelledby="tab-semana"></div>
+        <div class="pane" id="pane-todas" role="tabpanel" aria-labelledby="tab-todas">
+          <div class="search"><label><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="q" placeholder="Buscar cliente ou tarefa" autocomplete="off"><span class="n" id="qn"></span></label></div>
+          <div id="todasList"></div>
+        </div>
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      </div>
+
+      <div class="auto">Recolhe sozinho em 10 s<div class="drain"><i></i></div></div>
+      <div class="c-foot"><span id="foot">GESTTA</span></div>
+    </div>
+
+    <button class="cap" id="cap" type="button" aria-expanded="false" aria-controls="card" aria-label="Abrir minhas tarefas">
+      <svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/><circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="47.1" stroke-dashoffset="47.1" id="ringFg"/></svg>
+      <span class="t"><em><b id="capOv">–</b> vencidas</em><s>·</s><span><b id="capHoje">–</b> hoje</span></span>
+      <span class="sync" aria-hidden="true"></span>
+    </button>
+  </div>
+<script type="module" src="painel.js"></script>
+</body>
