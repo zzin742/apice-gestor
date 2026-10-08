@@ -98,3 +98,32 @@ jobs:
             instalador/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+
+  # O instalar.ps1 roda no Windows PowerShell 5.1 (o que vem no Windows 10 da bancada). Aqui só se
+  # confere que ele é lido inteiro por esse PowerShell (sintaxe e BOM) e passa no PSScriptAnalyzer.
+  instalar-ps1:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: BOM e sintaxe no Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $f = 'scripts/instalar.ps1'
+          $b = [IO.File]::ReadAllBytes($f)
+          if (-not ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)) { throw "$f precisa estar em UTF-8 com BOM" }
+          $tokens = $null; $erros = $null
+          [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$tokens, [ref]$erros) | Out-Null
+          if ($erros) { $erros | ForEach-Object { "::error file=$f,line=$($_.Extent.StartLineNumber)::$($_.Message)" }; exit 1 }
+          if ((Get-Content $f -Raw -Encoding UTF8) -notmatch [char]0x00C1) { throw 'Acentos não lidos como UTF-8' }
+          "Windows PowerShell $($PSVersionTable.PSVersion): sintaxe ok"
+
+      - name: PSScriptAnalyzer
+        shell: powershell
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -RequiredVersion 1.23.0
+          $r = Invoke-ScriptAnalyzer -Path scripts/instalar.ps1 -Severity Error,Warning `
+               -ExcludeRule PSAvoidUsingWriteHost,PSUseShouldProcessForStateChangingFunctions,PSUseApprovedVerbs,PSUseSingularNouns
+          $r | ForEach-Object { "::$(if ($_.Severity -eq 'Error') {'error'} else {'warning'}) file=scripts/instalar.ps1,line=$($_.Line)::$($_.RuleName): $($_.Message)" }
+          if ($r | Where-Object Severity -eq 'Error') { exit 1 }
