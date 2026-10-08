@@ -13,12 +13,18 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      api_base:
+        description: "Endereço da API do Hub embutido no .msi (ex.: https://<hub>/api/gestor). Vazio = sem endereço."
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-msi-${{ github.ref }}
+  # Por evento: um push no main não cancela uma run manual (a da bancada) no meio.
+  group: build-msi-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -42,8 +48,30 @@ jobs:
       - name: Dependências da CLI do Tauri
         run: npm ci
 
+      # O release lê GESTOR_API_BASE em tempo de compilação (src-tauri/src/api.rs, option_env!).
+      # Decisão do José Luiz (08/10): o endereço só entra por INPUT MANUAL (workflow_dispatch), nunca
+      # por variável fixa do repo, para nenhum build por push sair apontando para um lugar errado
+      # por esquecimento. Build por push = sem endereço (o app responde "endereço não configurado").
+      # Só exporta se tiver valor: string vazia viraria Some("") e o app chamaria URL quebrada.
+      # http é aceito porque o mock da Ponte na rede local é http.
       - name: Build do .msi
-        run: npx tauri build --bundles msi
+        shell: pwsh
+        env:
+          API_BASE: ${{ github.event_name == 'workflow_dispatch' && inputs.api_base || '' }}
+        run: |
+          $api = "$env:API_BASE".Trim()
+          if ($api) {
+            if ($api -notmatch '^https?://\S+$') { throw "api_base inválido: precisa ser http(s)://... sem espaços" }
+            $env:GESTOR_API_BASE = $api
+            "::notice::.msi com API do Hub: $api"
+            "API do Hub embutida: ``$api``" >> $env:GITHUB_STEP_SUMMARY
+            if ($api -like 'http://*') { "⚠️ http sem TLS — só para teste na rede local." >> $env:GITHUB_STEP_SUMMARY }
+          } else {
+            "::warning::Sem GESTOR_API_BASE — este .msi abre, mas responde 'endereço não configurado'. Não serve para a bancada."
+            "⚠️ **Sem endereço do Hub** — .msi não serve para a bancada." >> $env:GITHUB_STEP_SUMMARY
+          }
+          npx tauri build --bundles msi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # O tauri-bundler nomeia o .msi como "{productName}_{versão}_{arch}_{idioma}.msi", com acento
       # e espaço ("Ápice Gestor_..."), e não oferece opção de config. Aqui ele vira um nome ASCII
@@ -64,7 +92,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: apice-gestor-msi-${{ github.sha }}
+          name: apice-gestor-msi-${{ github.sha }}-${{ github.event_name == 'workflow_dispatch' && inputs.api_base != '' && 'com-api' || 'sem-api' }}
           path: |
             instalador/*.msi
             instalador/SHA256SUMS.txt
