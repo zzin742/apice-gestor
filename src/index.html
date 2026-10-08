@@ -311,12 +311,9 @@
   })();
 </script>
 <script type="module">
-  import { createClient, tabsOf, MOCK_BASE_URL } from './api/client.js';
+  import { tabsOf } from './api/client.js';
+  import { api, abrirNoNavegador } from './transporte.js';
 
-  /* ---------- API (mock da Ponte em dev; token virá do keychain pela casca) ---------- */
-  var qs=new URLSearchParams(location.search);
-  // ?token=gdt_mock_* troca o cenário do mock (mock/README.md). Token real: keychain, via casca — nunca aqui.
-  var api=createClient({baseUrl:qs.get('api')||MOCK_BASE_URL,token:qs.get('token')||'gdt_mock_rafael',agentVersion:'0.1.0'});
   var cfg={poll_interval_seconds:600,morning:{enabled:true,duration_seconds:10,once_per_day:true,not_before:'07:00'}};
 
   /* ---------- formatação (dado já resolvido pelo servidor; aqui só texto) ---------- */
@@ -423,7 +420,7 @@
     var t=byId[el.getAttribute('data-id')];if(!t)return;
     toast.textContent='Abrindo no Gestta ↗  '+t.title;toast.classList.add('show');
     clearTimeout(tt);tt=setTimeout(function(){toast.classList.remove('show')},1600);
-    if(t.gestta_url)window.open(t.gestta_url,'_blank','noopener');
+    if(t.gestta_url)abrirNoNavegador(t.gestta_url).catch(function(e){console.warn('abrir no Gestta',e);});
   }
   document.getElementById('card').addEventListener('click',function(e){var t=e.target.closest('.task');if(t)openTask(t);});
   document.getElementById('card').addEventListener('keydown',function(e){if(e.key==='Enter'){var t=e.target.closest('.task');if(t)openTask(t);}});
