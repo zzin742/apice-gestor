@@ -4,6 +4,17 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { createClient, tabsOf, GestorApiError } from '../src/api/client.js';
+import { businessHoursBetween, robotRun, now, spDate } from './data.mjs';
+
+// Funções puras de §3.5, antes de subir o servidor. Datas em São Paulo (−03:00).
+const sp = (s) => new Date(s + '-03:00');
+assert.equal(businessHoursBetween(sp('2026-10-09T16:00'), sp('2026-10-12T09:00')), 3); // sex 16h → seg 9h
+assert.ok(businessHoursBetween(sp('2026-10-06T10:00'), sp('2026-10-06T16:01')) > 6);   // ter 10h → 16h01
+assert.equal(businessHoursBetween(sp('2026-10-06T18:00'), sp('2026-10-07T08:00')), 0); // a noite não conta
+assert.equal(businessHoursBetween(sp('2026-10-10T08:00'), sp('2026-10-11T18:00')), 0); // fim de semana não conta
+assert.equal(robotRun(sp('2026-10-08T12:59')).getTime(), sp('2026-10-08T10:04').getTime());
+assert.equal(robotRun(sp('2026-10-08T06:59')).getTime(), sp('2026-10-07T16:04').getTime());
+console.log('  ✓ horas úteis e rodadas 07/10/13/16h (§3.5)');
 
 const port = 18787 + Math.floor(Math.random() * 1000);
 const env = { ...process.env, MOCK_PORT: String(port) };
@@ -31,6 +42,9 @@ try {
   assert.equal(d.api, 1); assert.equal(d.person.display_name, 'Rafael Moura');
   assert.equal(d.summary.overdue + d.summary.due_today, 15); assert.equal(d.summary.open_total, 146);
   assert.equal(d.sync.stale, false);
+  assert.equal(d.today, spDate(now())); // vencida/hoje relativos ao momento da consulta (§3.1)
+  assert.match(d.sync.last_sync_at, /T(07|10|13|16):04:00-03:00$/);
+  assert.equal(d.sync.stale_after_business_hours, 6);
   for (const t of d.tasks) {
     for (const k of ['id', 'title', 'client', 'department', 'status', 'bucket', 'gestta_url']) assert.ok(t[k], `${k} em ${t.id}`);
     if (t.bucket === 'overdue') assert.ok(t.due_date < d.today && t.days_overdue > 0);

@@ -2,12 +2,12 @@
 // Uso: npm run mock   (MOCK_PORT=8787, MOCK_NOW=2026-10-08T13:02 opcionais)
 import http from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
-import { PEOPLE, TOKENS, CODES, now, spDate, spInstant, buildTasks } from './data.mjs';
+import { PEOPLE, TOKENS, CODES, now, spDate, spInstant, buildTasks, businessHoursBetween, robotRun } from './data.mjs';
 
 const PORT = Number(process.env.MOCK_PORT || 8787);
 const HOST = process.env.MOCK_HOST || '127.0.0.1';
 const API = 1;
-const STALE_AFTER_HOURS = 10;
+const STALE_AFTER_BUSINESS_HOURS = 6; // horas úteis, seg–sex 08–18 (§3.5)
 const CONFIG_VERSION = 'c-mock-1';
 
 // Estado em memória (some ao reiniciar): tokens emitidos por enroll e últimos heartbeats.
@@ -76,9 +76,14 @@ function personOut(p) {
 }
 
 function lastSync(p, n) {
-  // Normal: o robô passou há 15–80 min. Cenário "velho": parado há 2 dias, como em 05/10.
-  const ms = p.stale ? 2 * 86400e3 + 3 * 3600e3 : (15 + (p.seed * 7) % 65) * 60e3;
-  return new Date(n.getTime() - ms);
+  // Rodadas fixas às 07, 10, 13 e 16h. Normal: a última que já passou.
+  // Cenário "velho": o robô parou, como em 05/10 — a última rodada que deu certo fica a mais de
+  // 2× o limite em horas úteis (contar rodadas não basta: segunda cedo cairia no fim de semana).
+  if (!p.stale) return robotRun(n, 0);
+  for (let k = 1; ; k++) {
+    const t = robotRun(n, k);
+    if (businessHoursBetween(t, n) > 2 * STALE_AFTER_BUSINESS_HOURS) return t;
+  }
 }
 
 function tasksBody(key) {
@@ -102,8 +107,8 @@ function tasksBody(key) {
     sync: {
       source: 'gestta',
       last_sync_at: spInstant(synced),
-      stale: n - synced > STALE_AFTER_HOURS * 3600e3,
-      stale_after_hours: STALE_AFTER_HOURS,
+      stale: businessHoursBetween(synced, n) > STALE_AFTER_BUSINESS_HOURS,
+      stale_after_business_hours: STALE_AFTER_BUSINESS_HOURS,
     },
     summary, tasks, truncated: false,
   };
@@ -119,7 +124,7 @@ function configBody(key) {
     tabs: ['hoje', 'semana', 'todas'],
     default_tab: 'hoje',
     morning: { enabled: true, duration_seconds: 10, once_per_day: true, not_before: '07:00' },
-    stale_after_hours: STALE_AFTER_HOURS,
+    stale_after_business_hours: STALE_AFTER_BUSINESS_HOURS,
     poll_interval_seconds: 600,
     heartbeat_interval_seconds: 900,
     notice: p.stale ? { level: 'warn', text: 'A sincronização com o Gestta está atrasada. Os dados podem não refletir baixas recentes.' } : null,
