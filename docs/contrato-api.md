@@ -140,7 +140,7 @@ O cartão inteiro numa chamada. O Hub resolve **tudo** que é semântica do Gest
     "source": "gestta",
     "last_sync_at": "2026-10-08T12:47:03-03:00",
     "stale": false,
-    "stale_after_hours": 10
+    "stale_after_business_hours": 6
   },
   "summary": {
     "overdue": 6,
@@ -187,7 +187,14 @@ de-para *dispositivo → pessoa do Hub → nome no Gestta* (`tarefa_responsavel`
 | `bucket = "week"` se aberta e `today < tarefa_datameta ≤ today + 7` (dias corridos) | |
 | `bucket = "later"` se aberta e `tarefa_datameta > today + 7`, ou sem data | |
 | `sync.last_sync_at` = `max(atualizado_em)` das linhas lidas (não o horário da consulta) | §3.3 |
-| `sync.stale` = `now − last_sync_at > stale_after_hours` | guarda de dado velho |
+| `sync.stale` = horas úteis entre `last_sync_at` e agora `> stale_after_business_hours` (ver §3.5) | guarda de dado velho |
+
+**Vencida e hoje são calculadas no momento da consulta, nunca no momento do sync.** `today` é a data
+de São Paulo no instante em que o Hub responde; `bucket` e `days_overdue` saem de `tarefa_datameta`
+comparada com esse `today`. Uma tarefa sincronizada ontem com meta hoje aparece hoje como `today` — e
+amanhã como `overdue`, mesmo que o robô não tenha rodado. O sync só define **o que** existe e o
+status; **quando** vence é sempre relativo a agora. Se o Hub mantiver cache, ele guarda as linhas
+lidas, não os buckets; nenhum cache atravessa a meia-noite com `today` velho.
 
 ### 3.2 As abas, sem o agente pensar
 
@@ -230,6 +237,18 @@ Mediana de 146 abertas por pessoa; 4 pessoas passam de 100 só em "vencidas + ho
 `"truncated": true` (o agente mostra "mostrando 2.000 de N" na aba Todas). Contas-caixa (milhares)
 já estão fora por regra.
 
+### 3.5 Dado velho (decisão do José Luiz, 08/10/2026)
+
+- **A unidade é hora útil:** só conta o tempo de **segunda a sexta, das 08:00 às 18:00** (São Paulo).
+  Noite e fim de semana **não contam**. Feriado, na v1, conta como dia útil.
+- **Limite inicial: 6 horas úteis**, configurável na administração do Hub (*Configurações do agente*).
+- `stale = horas_uteis(last_sync_at, agora) > stale_after_business_hours`, calculado pelo Hub a cada
+  consulta. O agente não refaz a conta; usa `sync.stale` e mostra `last_sync_at`.
+- Exemplos com limite 6: sync sexta 16:00 → segunda 09:00 = 3 h úteis (fresco). Sync terça 10:00,
+  rodadas de 13:00 e 16:00 falham → às 16:01 são 6 h01 úteis (velho).
+- **Rodadas do robô:** fixas às **07:00, 10:00, 13:00 e 16:00**. O mock simula `last_sync_at` nesses
+  horários até isso estar em produção.
+
 ---
 
 ## 4. `GET /api/gestor/me/config`
@@ -248,7 +267,7 @@ mudou (`config_version`) e, no mínimo, a cada hora. Suporta `ETag`/`304`.
   "tabs": ["hoje", "semana", "todas"],
   "default_tab": "hoje",
   "morning": { "enabled": true, "duration_seconds": 10, "once_per_day": true, "not_before": "07:00" },
-  "stale_after_hours": 10,
+  "stale_after_business_hours": 6,
   "poll_interval_seconds": 600,
   "heartbeat_interval_seconds": 900,
   "notice": null,
@@ -261,7 +280,7 @@ mudou (`config_version`) e, no mínimo, a cada hora. Suporta `ETag`/`304`.
 | `paused` | `true` → cápsula some (fica só o ícone da bandeja); continua mandando heartbeat |
 | `tabs` | abas visíveis, na ordem; sempre contém `default_tab` |
 | `morning` | bom-dia ao iniciar a sessão do Windows: aberto por `duration_seconds`, no máximo 1×/dia se `once_per_day`, e só depois de `not_before` (hora local) |
-| `stale_after_hours` | o mesmo valor de `sync.stale_after_hours` — a decisão de "velho" é do servidor; aqui é para o texto do aviso |
+| `stale_after_business_hours` | o mesmo valor de `sync.stale_after_business_hours`, em **horas úteis** (§3.5) — a decisão de "velho" é do servidor; aqui é só para o texto do aviso |
 | `poll_interval_seconds` | intervalo de `GET me/tasks` (mínimo aceito pelo agente: 60) |
 | `heartbeat_interval_seconds` | intervalo do heartbeat (mínimo: 300) |
 | `notice` | `null` ou `{ "level": "info"\|"warn", "text": "…" }` — faixa no topo do cartão |
@@ -313,11 +332,6 @@ Falha de heartbeat **nunca** aparece para o usuário; o agente tenta de novo no 
 3. **Hora na meta.** `tarefa_datameta` é `date` ou `timestamp`? Define se `due_time` existe.
 4. **Competência.** Há campo de competência ou ela só aparece no nome da tarefa?
 5. **Validade do código de enrolamento** (sugestão 24 h) e limite de tentativas.
-
-Decisão do José Luiz, ainda aberta: `stale_after_hours` inicial. Sugestão ≈ 2× o intervalo do robô
-(Arquitetura §3.3) — com 3 rodadas/dia, 10 h. **Atenção ao buraco da noite:** se a última rodada
-for ~18h e a primeira ~7h, são 13 h sem sync e o bom-dia sairia "dados de ontem" todo dia. Ou a
-primeira rodada do robô acontece antes do expediente, ou o limite conta só horário comercial.
 
 ---
 

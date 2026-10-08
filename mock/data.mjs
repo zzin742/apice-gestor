@@ -139,7 +139,7 @@ export const PEOPLE = {
   },
   denise: {
     id: 'pes_denise', display_name: 'Denise Prado', first_name: 'Denise', department: 'Pessoal', seed: 41,
-    counts: { overdue: 8, today: 7, done: 0, week: 21, later: 98 }, stale: true, // robô parado
+    counts: { overdue: 8, today: 7, done: 0, week: 21, later: 98 }, stale: true, // robô parado: última rodada a > 12 h úteis
   },
   elton: {
     id: 'pes_elton', display_name: 'Elton Reis', first_name: 'Elton', department: 'Legalização', seed: 53,
@@ -170,3 +170,41 @@ export const CODES = {
   USAD2222: { kind: 'code_used' },
   CAXA4444: { kind: 'excluded_account' },
 };
+
+// ---------- dado velho em horas úteis (contrato §3.5) ----------
+
+const SP_MS = 3 * 3600e3; // São Paulo = UTC−3; trabalhamos num "relógio local" deslocado
+const BUSINESS = { from: 8, to: 18 }; // seg–sex, 08:00–18:00. Feriado conta como útil na v1.
+export const ROBOT_RUNS = [7, 10, 13, 16]; // rodadas fixas do robô (decisão de 08/10/2026)
+
+// Horas úteis entre dois instantes (Date), seg–sex 08–18 em São Paulo.
+export function businessHoursBetween(a, b) {
+  if (b <= a) return 0;
+  let ms = 0;
+  const end = b.getTime() - SP_MS;
+  let day = new Date(a.getTime() - SP_MS); day.setUTCHours(0, 0, 0, 0);
+  for (; day.getTime() <= end; day.setUTCDate(day.getUTCDate() + 1)) {
+    const dow = day.getUTCDay();
+    if (dow === 0 || dow === 6) continue;
+    const open = day.getTime() + BUSINESS.from * 3600e3, close = day.getTime() + BUSINESS.to * 3600e3;
+    const s = Math.max(open, a.getTime() - SP_MS), e = Math.min(close, end);
+    if (e > s) ms += e - s;
+  }
+  return ms / 3600e3;
+}
+
+// Instante da k-ésima rodada do robô antes de `n` (k = 0 é a mais recente).
+// Cada rodada grava alguns minutos depois do horário cheio.
+export function robotRun(n, k = 0, minutesAfter = 4) {
+  const local = new Date(n.getTime() - SP_MS);
+  const day = new Date(local); day.setUTCHours(0, 0, 0, 0);
+  const runs = [];
+  for (let d = 0; runs.length <= k; d++) {
+    const base = day.getTime() - d * 86400e3;
+    for (const h of [...ROBOT_RUNS].reverse()) {
+      const t = base + h * 3600e3 + minutesAfter * 60e3;
+      if (t <= local.getTime()) runs.push(t);
+    }
+  }
+  return new Date(runs[k] + SP_MS);
+}
