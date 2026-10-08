@@ -90,6 +90,33 @@ jobs:
           [IO.File]::WriteAllText("$PWD/instalador/SHA256SUMS.txt", "$h  $nome`n")
           "### $nome`n`nSHA-256 ``$h```n`nGerado de ``$($msi[0].Name)``. Sem assinatura — só para Parallels/bancada." >> $env:GITHUB_STEP_SUMMARY
 
+      # Roda o scripts/instalar.ps1 de verdade com o .msi recém-gerado (o runner é administrador):
+      # instala, repete (tem que ser "nada a fazer"), desinstala e confere que limpou. O enrolamento
+      # fica de fora: precisa do Hub e de alguém digitando o código.
+      - name: Teste do instalar.ps1 (instala, repete, desinstala)
+        shell: powershell
+        run: |
+          $s   = (Resolve-Path scripts/instalar.ps1).Path
+          $msi = (Get-ChildItem instalador/*.msi)[0].FullName
+          $exe = Join-Path $env:ProgramFiles (([char]0x00C1 + 'pice Gestor') + '\apice-gestor.exe')
+          $log = Join-Path $env:ProgramData 'ApiceGestor\instalar.log'
+
+          & $s -Msi $msi -SemEnrolar
+          if ($LASTEXITCODE -ne 0) { throw "instalar falhou ($LASTEXITCODE)" }
+          if (-not (Test-Path $exe)) { throw "exe não instalado em $exe" }
+
+          & $s -Msi $msi -SemEnrolar
+          if ($LASTEXITCODE -ne 0) { throw "segunda execução falhou ($LASTEXITCODE)" }
+          if (-not (Select-String -Path $log -Pattern 'nada a fazer' -Quiet)) { throw 'segunda execução reinstalou: não é idempotente' }
+
+          & $s -Desinstalar
+          if ($LASTEXITCODE -ne 0) { throw "desinstalar falhou ($LASTEXITCODE)" }
+          if (Test-Path $exe) { throw 'exe continua lá depois de desinstalar' }
+
+          & $s -Desinstalar
+          if ($LASTEXITCODE -ne 0) { throw "desinstalar 2x falhou ($LASTEXITCODE)" }
+          "--- instalar.log ---"; Get-Content $log
+
       - uses: actions/upload-artifact@v6
         with:
           name: apice-gestor-msi-${{ github.sha }}-${{ github.event_name == 'workflow_dispatch' && inputs.api_base != '' && 'com-api' || 'sem-api' }}

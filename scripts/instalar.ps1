@@ -1,50 +1,59 @@
 ﻿<#
 .SYNOPSIS
-  Instala o Ápice Gestor num PC e enrola a máquina no Hub. Uma vez por PC, presencial.
+  Instala (ou desinstala) o Ápice Gestor num PC e enrola a máquina no Hub. Presencial, uma vez por PC.
 
 .DESCRIPTION
   Rode COMO O COLABORADOR (a sessão dele aberta), sem "Executar como administrador":
 
       powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1
+      powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1 -Desinstalar
 
-  O script tem duas etapas:
-    1. Máquina (precisa de administrador; o script pede o UAC sozinho): WebView2, .msi e exceção
-       no Defender. Pode ser autorizada com a senha de TI: nada desta etapa é do usuário.
-    2. Enrolamento (roda SEM elevação, no usuário do colaborador): pede o código gerado no Hub e
-       chama "apice-gestor.exe --enrolar <código>". O token vai para o Credential Manager DO
-       USUÁRIO que roda esta etapa, por isso ela nunca roda como a conta de TI.
+  Instalar tem duas etapas:
+    1. Máquina (administrador; o script pede o UAC sozinho): WebView2 se faltar, o .msi em
+       silêncio e a exceção no Defender. Pode ser autorizada com a senha da TI.
+    2. Enrolamento (SEM elevação, no usuário da sessão): pede o código gerado no Hub e chama
+       "apice-gestor.exe --enrolar <código>". O token vai para o Credential Manager DO USUÁRIO que
+       roda esta etapa; por isso ela nunca roda como a conta da TI.
 
-  Idempotente: rodar de novo não reinstala a mesma versão, não duplica a exceção e não enrola de
-  novo uma máquina que já tem token (use -Reenrolar para trocar o token).
+  Idempotente: não reinstala o mesmo .msi (mesmo ProductCode), não duplica a exceção e não enrola
+  de novo quem já tem token (-Reenrolar para trocar).
 
-  Rate limit do POST /enroll (10/min por IP, e os 95 PCs saem pelo mesmo IP):
-    - o executável já espera retry_after_seconds no 429 (até 3x, teto 300 s);
-    - código inválido/expirado/usado: o script NUNCA repete; pede um código novo ao admin;
-    - no máximo UMA tentativa automática por código; repetir é sempre decisão de quem instala.
+  Rate limit do POST /enroll (10/min por IP; os 95 PCs saem pelo mesmo IP):
+    - 429: o executável já espera retry_after_seconds (até 3x, teto 300 s);
+    - código inválido/expirado/usado: NUNCA é reenviado, nem se digitarem de novo; pede código novo;
+    - no máximo UMA chamada automática por código; repetir é sempre decisão de quem instala.
 
-  Não precisa de domínio nem de Microsoft 365. Não grava o código nem o token em log.
+  Desinstalar remove o app e a exceção no Defender e PRESERVA o token (reinstalar não gasta outro
+  código). -RemoverToken apaga o token também.
+
+  Não precisa de domínio nem de Microsoft 365. Não grava código nem token em log.
 
 .PARAMETER Msi
-  Caminho do .msi. Padrão: o apice-gestor_*_x64.msi da pasta do script. Se houver um
+  Caminho do .msi. Padrão: o único apice-gestor_*_x64.msi da pasta do script. Se houver
   SHA256SUMS.txt ao lado, o hash é conferido antes de instalar.
 
 .PARAMETER Reenrolar
-  Enrola de novo mesmo se a máquina já tiver token (ex.: dispositivo revogado no Hub).
+  Enrola de novo mesmo com token presente (ex.: dispositivo revogado no Hub).
 
 .PARAMETER SemEnrolar
   Só a etapa da máquina.
 
+.PARAMETER Desinstalar
+  Desinstala. Preserva o token, a não ser com -RemoverToken.
+
 .NOTES
-  Arquivo salvo em UTF-8 COM BOM: o Windows PowerShell 5.1 lê sem BOM como ANSI e estraga os
-  acentos. Saídas: 0 ok · 1 erro na etapa da máquina · 2 enrolamento não concluído.
+  Salvo em UTF-8 COM BOM: sem BOM o Windows PowerShell 5.1 lê como ANSI e estraga os acentos.
+  Saídas: 0 ok · 1 erro na etapa da máquina · 2 enrolamento não concluído.
 #>
 [CmdletBinding()]
 param(
     [string]$Msi,
     [switch]$Reenrolar,
     [switch]$SemEnrolar,
-    # Interno: usado quando o script se relança elevado para a etapa da máquina.
-    [ValidateSet('Tudo', 'Maquina')]
+    [switch]$Desinstalar,
+    [switch]$RemoverToken,
+    # Interno: o script se relança elevado só para a parte que precisa de administrador.
+    [ValidateSet('Tudo', 'Maquina', 'Remocao')]
     [string]$Etapa = 'Tudo'
 )
 
@@ -53,13 +62,19 @@ Set-StrictMode -Version 2
 
 # --- Constantes ------------------------------------------------------------------------------
 # Iguais às do src-tauri (tauri.conf.json e api.rs). Mudou lá, muda aqui.
-$UpgradeCode    = '{97800A68-CABD-52E3-886A-6D8831965CFF}'
-$PastaApp       = Join-Path $env:ProgramFiles ([char]0x00C1 + 'pice Gestor')   # "Ápice Gestor"
-$Exe            = Join-Path $PastaApp 'apice-gestor.exe'
-$KeychainServico = 'br.com.apice.gestor'                                        # alvo no Credential Manager
-$WebView2Id     = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-$WebView2Url    = 'https://go.microsoft.com/fwlink/p/?LinkId=2124703'           # Evergreen Bootstrapper
-$PastaLog       = Join-Path $env:ProgramData 'ApiceGestor'
+$UpgradeCode     = '{97800A68-CABD-52E3-886A-6D8831965CFF}'
+$NomeApp         = [char]0x00C1 + 'pice Gestor'                       # "Ápice Gestor"
+$PastaApp        = Join-Path $env:ProgramFiles $NomeApp
+$Exe             = Join-Path $PastaApp 'apice-gestor.exe'
+$Processo        = 'apice-gestor'
+$KeychainServico = 'br.com.apice.gestor'                              # alvo no Credential Manager
+$WebView2Id      = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+$WebView2Url     = 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' # Evergreen Bootstrapper
+$PastaLog        = Join-Path $env:ProgramData 'ApiceGestor'
+$RaizesUninstall = @(
+    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+)
 
 # --- Utilidades ------------------------------------------------------------------------------
 function Escrever([string]$texto, [string]$cor = 'Gray') {
@@ -77,35 +92,47 @@ function EhAdmin {
     return $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-function VersaoDoMsi([string]$caminho) {
-    $wi = New-Object -ComObject WindowsInstaller.Installer
-    $db = $wi.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $wi, @($caminho, 0))
-    $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db,
-        @("SELECT Value FROM Property WHERE Property='ProductVersion'"))
-    $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
-    $rec = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
-    $v = $rec.GetType().InvokeMember('StringData', 'GetProperty', $null, $rec, 1)
-    $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) | Out-Null
-    return [version]$v
+function Com([object]$obj, [string]$membro, [string]$tipo, [object[]]$argumentos) {
+    return $obj.GetType().InvokeMember($membro, $tipo, $null, $obj, $argumentos)
 }
 
-function VersaoInstalada {
-    try { return VersaoInstaladaCom } catch { Write-Verbose "COM do Windows Installer falhou; tentando o registro." }
-    $raizes = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
-              'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
-    $app = Get-ItemProperty $raizes -ErrorAction SilentlyContinue |
-        Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -eq ([char]0x00C1 + 'pice Gestor') } |
-        Select-Object -First 1
-    if ($app) { return [version]$app.DisplayVersion }
-    return $null
+function PropriedadeDoMsi([string]$caminho, [string]$nome) {
+    $wi = New-Object -ComObject WindowsInstaller.Installer
+    $db = Com $wi 'OpenDatabase' 'InvokeMethod' @($caminho, 0)
+    $view = Com $db 'OpenView' 'InvokeMethod' @("SELECT Value FROM Property WHERE Property='$nome'")
+    Com $view 'Execute' 'InvokeMethod' $null | Out-Null
+    $rec = Com $view 'Fetch' 'InvokeMethod' $null
+    $valor = Com $rec 'StringData' 'GetProperty' @(1)
+    Com $view 'Close' 'InvokeMethod' $null | Out-Null
+    return $valor
 }
 
-function VersaoInstaladaCom {
-    $wi = New-Object -ComObject WindowsInstaller.Installer
-    $produtos = $wi.GetType().InvokeMember('RelatedProducts', 'GetProperty', $null, $wi, @($UpgradeCode))
-    foreach ($p in $produtos) {
-        $v = $wi.GetType().InvokeMember('ProductInfo', 'GetProperty', $null, $wi, @($p, 'VersionString'))
-        if ($v) { return [version]$v }
+# ProductCodes instalados desta família (mesmo UpgradeCode). Cada build tem ProductCode novo.
+function ProdutosInstalados {
+    $codigos = @()
+    try {
+        $wi = New-Object -ComObject WindowsInstaller.Installer
+        foreach ($c in (Com $wi 'RelatedProducts' 'GetProperty' @($UpgradeCode))) { $codigos += [string]$c }
+    } catch {
+        Write-Verbose "COM do Windows Installer falhou; procurando no registro."
+    }
+    if (-not $codigos) {
+        foreach ($raiz in $RaizesUninstall) {
+            Get-ChildItem $raiz -ErrorAction SilentlyContinue | ForEach-Object {
+                $p = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+                if ($p -and $p.PSObject.Properties['DisplayName'] -and $p.DisplayName -eq $NomeApp -and $_.PSChildName -like '{*}') {
+                    $codigos += $_.PSChildName
+                }
+            }
+        }
+    }
+    return @($codigos | Select-Object -Unique)
+}
+
+function VersaoInstalada([string]$productCode) {
+    foreach ($raiz in $RaizesUninstall) {
+        $p = Get-ItemProperty (Join-Path $raiz $productCode) -ErrorAction SilentlyContinue
+        if ($p -and $p.PSObject.Properties['DisplayVersion']) { return [version]$p.DisplayVersion }
     }
     return $null
 }
@@ -123,17 +150,45 @@ function WebView2Presente {
     return $false
 }
 
-function JaEnrolado {
-    # keyring (Windows) grava um "Generic credential" cujo alvo contém o serviço.
-    $lista = cmdkey /list 2>$null | Out-String
-    return $lista -match [regex]::Escape($KeychainServico)
+# Alvos do Credential Manager do usuário atual que pertencem ao app (o keyring grava um
+# "Generic credential" cujo alvo contém o serviço).
+function AlvosDoToken {
+    $alvos = @()
+    foreach ($linha in (cmdkey /list 2>$null)) {
+        if ($linha -match '(?:Target|Destino)\s*:\s*(.+)$' -and $Matches[1] -like "*$KeychainServico*") {
+            $alvos += ($Matches[1].Trim() -replace '^LegacyGeneric:target=', '')
+        }
+    }
+    return @($alvos)
 }
 
-# --- Etapa 1: máquina (administrador) --------------------------------------------------------
+function JaEnrolado { return [bool](AlvosDoToken) }
+
+function PararApp {
+    $abertos = @(Get-Process -Name $Processo -ErrorAction SilentlyContinue)
+    if ($abertos) {
+        $abertos | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+        Escrever "App fechado ($($abertos.Count) processo(s))."
+    }
+}
+
+function RelancarElevado([string]$etapa, [string[]]$extras) {
+    $argsElevado = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Etapa', $etapa) + $extras
+    try {
+        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $argsElevado -Verb RunAs -Wait -PassThru
+    } catch {
+        Write-Host 'Permissão de administrador negada. Nada foi feito na máquina.' -ForegroundColor Red
+        return 1
+    }
+    return $p.ExitCode
+}
+
+# --- Etapa da máquina: instalar (administrador) ----------------------------------------------
 function EtapaMaquina([string]$msi) {
     Escrever '== Etapa da máquina ==' 'Cyan'
 
-    # 1a. WebView2: o .msi baixa o bootstrapper na instalação (decisão de 08/10). Aqui só garantimos.
+    # WebView2: o .msi também baixa o bootstrapper na instalação (decisão de 08/10). Aqui só garantimos.
     if (WebView2Presente) {
         Escrever 'WebView2: já presente.'
     } else {
@@ -147,13 +202,21 @@ function EtapaMaquina([string]$msi) {
         Escrever 'WebView2: instalado.' 'Green'
     }
 
-    # 1b. .msi: só instala se não houver a mesma versão (ou mais nova).
-    $nova = VersaoDoMsi $msi
-    $atual = VersaoInstalada
-    if ($atual -and $atual -ge $nova) {
-        Escrever "Ápice Gestor $atual já instalado (o .msi é $nova): nada a fazer."
+    # .msi: pula só se ESTE .msi (mesmo ProductCode) já está instalado. Todo build do piloto sai
+    # 0.1.0, então comparar versão não basta; o template do Tauri aceita atualizar na mesma versão.
+    $codigo = PropriedadeDoMsi $msi 'ProductCode'
+    $nova = [version](PropriedadeDoMsi $msi 'ProductVersion')
+    $instalados = ProdutosInstalados
+    $atual = $null
+    foreach ($c in $instalados) { $v = VersaoInstalada $c; if ($v) { $atual = $v } }
+
+    if ($instalados -contains $codigo) {
+        Escrever "Este .msi ($nova) já está instalado: nada a fazer."
+    } elseif ($atual -and $atual -gt $nova) {
+        Escrever "Já há uma versão mais nova instalada ($atual > $nova). Não vou voltar versão." 'Yellow'
     } else {
-        Escrever "Instalando Ápice Gestor $nova$(if ($atual) { " (atualizando de $atual)" })..."
+        PararApp
+        Escrever "Instalando $NomeApp $nova$(if ($instalados) { " (substituindo o build instalado $atual)" })..."
         $logMsi = Join-Path $PastaLog "msi-$(Get-Date -Format yyyyMMdd-HHmmss).log"
         $p = Start-Process -FilePath 'msiexec.exe' -Wait -PassThru -ArgumentList @(
             '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$logMsi`"")
@@ -166,7 +229,7 @@ function EtapaMaquina([string]$msi) {
     }
     if (-not (Test-Path $Exe)) { throw "Executável não encontrado em $Exe depois da instalação." }
 
-    # 1c. Exceção no Defender (a pasta do app). Sem Defender ativo (outro antivírus): avisa e segue.
+    # Exceção no Defender (pasta do app). Sem Defender ativo (outro antivírus): avisa e segue.
     try {
         $existentes = @((Get-MpPreference).ExclusionPath)
         if ($existentes -contains $PastaApp) {
@@ -180,7 +243,40 @@ function EtapaMaquina([string]$msi) {
     }
 }
 
-# --- Etapa 2: enrolamento (usuário do colaborador, sem elevação) -----------------------------
+# --- Etapa da máquina: desinstalar (administrador) -------------------------------------------
+function EtapaRemocao {
+    Escrever '== Desinstalação (máquina) ==' 'Cyan'
+    PararApp
+
+    $instalados = ProdutosInstalados
+    if (-not $instalados) {
+        Escrever "$NomeApp não está instalado."
+    }
+    foreach ($c in $instalados) {
+        $logMsi = Join-Path $PastaLog "msi-remover-$(Get-Date -Format yyyyMMdd-HHmmss).log"
+        $p = Start-Process -FilePath 'msiexec.exe' -Wait -PassThru -ArgumentList @(
+            '/x', $c, '/qn', '/norestart', '/l*v', "`"$logMsi`"")
+        switch ($p.ExitCode) {
+            0       { Escrever "Removido ($c)." 'Green' }
+            3010    { Escrever "Removido ($c); o Windows pede reinício." 'Green' }
+            1605    { Escrever "Já não estava instalado ($c)." }
+            1618    { throw 'Outra instalação do Windows está em andamento. Espere terminar e rode de novo.' }
+            default { throw "msiexec /x falhou com código $($p.ExitCode). Log: $logMsi" }
+        }
+    }
+
+    try {
+        if (@((Get-MpPreference).ExclusionPath) -contains $PastaApp) {
+            Remove-MpPreference -ExclusionPath $PastaApp
+            Escrever 'Defender: exceção removida.' 'Green'
+        }
+    } catch {
+        Escrever "Defender: não deu para remover a exceção ($($_.Exception.Message))." 'Yellow'
+    }
+    # WebView2 fica: é componente do Windows, outros apps usam.
+}
+
+# --- Enrolamento (usuário da sessão, sem elevação) --------------------------------------------
 function Enrolar {
     Escrever '== Enrolamento ==' 'Cyan'
 
@@ -189,22 +285,22 @@ function Enrolar {
         return $true
     }
 
-    $recusados = @{}   # códigos que o Hub recusou (2): nunca reenviar, nem se digitarem de novo
+    $recusados = @{}   # códigos que o Hub recusou (saída 2): nunca reenviar
     $saida = Join-Path $env:TEMP "apice-enrolar-$PID.txt"
     $erros = Join-Path $env:TEMP "apice-enrolar-$PID-err.txt"
     try {
         while ($true) {
-            $codigo = (Read-Host 'Código de enrolamento (gerado no Hub; Enter vazio para sair)').Trim()
+            $codigo = ([string](Read-Host 'Código de enrolamento (gerado no Hub; Enter vazio para sair)')).Trim()
             if (-not $codigo) { Escrever 'Enrolamento não feito. Rode o script de novo quando tiver o código.' 'Yellow'; return $false }
             if ($recusados.ContainsKey($codigo.ToUpper())) {
                 Escrever 'Esse código já foi recusado pelo Hub. Peça um código NOVO ao admin.' 'Red'
                 continue
             }
 
-            # UMA chamada por código. O 429 é esperado dentro do executável; aqui não há repetição automática.
+            # UMA chamada por código digitado. O 429 é esperado dentro do executável.
             $p = Start-Process -FilePath $Exe -ArgumentList '--enrolar', $codigo -Wait -PassThru -NoNewWindow `
                 -RedirectStandardOutput $saida -RedirectStandardError $erros
-            $texto = (Get-Content $saida -Raw -ErrorAction SilentlyContinue)
+            $texto = Get-Content $saida -Raw -ErrorAction SilentlyContinue
             if ($texto) { $texto = $texto.Trim() }
 
             switch ($p.ExitCode) {
@@ -213,7 +309,7 @@ function Enrolar {
                     return $true
                 }
                 2 {
-                    # invalid_code / code_expired / code_used: nunca repetir o mesmo código.
+                    # invalid_code / code_expired / code_used
                     Escrever 'Código inválido, expirado ou já usado. Peça um código NOVO ao admin do Hub.' 'Red'
                     $recusados[$codigo.ToUpper()] = $true
                 }
@@ -236,7 +332,55 @@ function Enrolar {
     }
 }
 
+function RemoverTokenDoUsuario {
+    $alvos = AlvosDoToken
+    if (-not $alvos) { Escrever 'Token: não havia token para este usuário.'; return }
+    foreach ($a in $alvos) {
+        cmdkey "/delete:$a" | Out-Null
+        if ($LASTEXITCODE -ne 0) { cmdkey "/delete:LegacyGeneric:target=$a" | Out-Null }
+    }
+    if (JaEnrolado) { Escrever 'Token: não consegui remover. Apague no Gerenciador de Credenciais (Credenciais genéricas).' 'Yellow' }
+    else { Escrever 'Token removido. Para usar de novo, será preciso um código novo.' 'Green' }
+}
+
+function SessaoEhDesteUsuario {
+    # Se este PowerShell está elevado como OUTRA conta (a da TI), o token iria para a conta errada.
+    if (-not (EhAdmin)) { return $true }
+    $sessao = (Get-CimInstance Win32_ComputerSystem).UserName      # DOMINIO\usuario da sessão aberta
+    $eu = "$env:USERDOMAIN\$env:USERNAME"
+    if ($sessao -and ($sessao -ne $eu)) {
+        Write-Host "Este PowerShell roda como $eu, mas a sessão aberta é de $sessao." -ForegroundColor Red
+        Write-Host 'O token é da conta da sessão. Rode de novo como o colaborador, sem "Executar como administrador".' -ForegroundColor Red
+        return $false
+    }
+    return $true
+}
+
 # --- Fluxo -----------------------------------------------------------------------------------
+# Instâncias elevadas: só a parte da máquina.
+if ($Etapa -eq 'Maquina') {
+    try { EtapaMaquina (Resolve-Path $Msi).Path; exit 0 } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
+}
+if ($Etapa -eq 'Remocao') {
+    try { EtapaRemocao; exit 0 } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
+}
+
+if ($Desinstalar) {
+    if ($RemoverToken) {
+        if (-not (SessaoEhDesteUsuario)) { exit 2 }
+        RemoverTokenDoUsuario
+    } else {
+        Escrever 'Token preservado (reinstalar não gasta outro código). Para apagar: -RemoverToken.'
+    }
+    if (EhAdmin) {
+        try { EtapaRemocao } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
+    } else {
+        Write-Host 'Pedindo permissão de administrador para desinstalar...' -ForegroundColor Cyan
+        if ((RelancarElevado 'Remocao' @()) -ne 0) { Write-Host "A desinstalação falhou (veja $PastaLog\instalar.log)." -ForegroundColor Red; exit 1 }
+    }
+    exit 0
+}
+
 if (-not $Msi) {
     $candidatos = @(Get-ChildItem -Path $PSScriptRoot -Filter 'apice-gestor_*_x64.msi' -ErrorAction SilentlyContinue)
     if ($candidatos.Count -ne 1) { Write-Host "Coloque exatamente um apice-gestor_*_x64.msi ao lado do script (achei $($candidatos.Count)) ou use -Msi." -ForegroundColor Red; exit 1 }
@@ -244,52 +388,33 @@ if (-not $Msi) {
 }
 $Msi = (Resolve-Path $Msi).Path
 
-if ($Etapa -eq 'Maquina') {
-    # Instância elevada: só a etapa da máquina.
-    try { EtapaMaquina $Msi; exit 0 } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
-}
-
 # Confere o hash, se o SHA256SUMS.txt do CI estiver junto.
 $somas = Join-Path (Split-Path $Msi) 'SHA256SUMS.txt'
 if (Test-Path $somas) {
-    $esperado = (Select-String -Path $somas -Pattern ([regex]::Escape((Split-Path $Msi -Leaf))) | Select-Object -First 1).Line
-    if ($esperado) {
+    $linha = Select-String -Path $somas -Pattern ([regex]::Escape((Split-Path $Msi -Leaf))) | Select-Object -First 1
+    if ($linha) {
         $h = (Get-FileHash $Msi -Algorithm SHA256).Hash.ToLower()
-        if (-not $esperado.StartsWith($h)) { Write-Host "SHA-256 do .msi NÃO confere com SHA256SUMS.txt. Não instale." -ForegroundColor Red; exit 1 }
+        if (-not $linha.Line.StartsWith($h)) { Write-Host 'SHA-256 do .msi NÃO confere com SHA256SUMS.txt. Não instale.' -ForegroundColor Red; exit 1 }
         Write-Host "SHA-256 confere: $h" -ForegroundColor Green
     }
 }
+# Baixado do GitHub, o .msi vem com a marca "veio da internet"; o hash já foi conferido.
+Unblock-File -Path $Msi -ErrorAction SilentlyContinue
 
-# Etapa da máquina: relança elevado (UAC). Quem autoriza pode ser o próprio colaborador ou a TI.
+# Etapa da máquina: relança elevado (UAC). Quem autoriza pode ser o colaborador ou a TI.
 if (EhAdmin) {
     try { EtapaMaquina $Msi } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
 } else {
     Write-Host 'Pedindo permissão de administrador para instalar...' -ForegroundColor Cyan
-    $argsElevado = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Etapa', 'Maquina', '-Msi', "`"$Msi`"")
-    try {
-        $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $argsElevado -Verb RunAs -Wait -PassThru
-    } catch {
-        Write-Host 'Permissão de administrador negada. Nada foi instalado.' -ForegroundColor Red; exit 1
-    }
-    if ($p.ExitCode -ne 0) { Write-Host "A etapa da máquina falhou (veja $PastaLog\instalar.log)." -ForegroundColor Red; exit 1 }
+    if ((RelancarElevado 'Maquina' @('-Msi', "`"$Msi`"")) -ne 0) { Write-Host "A etapa da máquina falhou (veja $PastaLog\instalar.log)." -ForegroundColor Red; exit 1 }
 }
 
 if ($SemEnrolar) { exit 0 }
-
-# Enrolamento: precisa ser o usuário da sessão (o dono do Credential Manager onde o app procura o token).
-if (EhAdmin) {
-    $sessao = (Get-CimInstance Win32_ComputerSystem).UserName      # DOMINIO\usuario da sessão aberta
-    $eu = "$env:USERDOMAIN\$env:USERNAME"
-    if ($sessao -and ($sessao -ne $eu)) {
-        Write-Host "Este PowerShell roda como $eu, mas a sessão aberta é de $sessao." -ForegroundColor Red
-        Write-Host 'O token ficaria na conta errada. Rode de novo como o colaborador, sem "Executar como administrador".' -ForegroundColor Red
-        exit 2
-    }
-}
+if (-not (SessaoEhDesteUsuario)) { exit 2 }
 
 if (Enrolar) {
-    # Abre o app para o colaborador (fora da elevação, já que este processo é o do usuário).
-    if (-not (Get-Process -Name 'apice-gestor' -ErrorAction SilentlyContinue)) { Start-Process -FilePath $Exe }
+    # Abre o app na sessão do colaborador (este processo é o dele).
+    if (-not (Get-Process -Name $Processo -ErrorAction SilentlyContinue)) { Start-Process -FilePath $Exe }
     Escrever 'Pronto.' 'Green'
     exit 0
 }
