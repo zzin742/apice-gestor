@@ -45,22 +45,27 @@ jobs:
       - name: Build do .msi
         run: npx tauri build --bundles msi
 
-      - name: SHA-256 do instalador
+      # O tauri-bundler nomeia o .msi como "{productName}_{versão}_{arch}_{idioma}.msi", com acento
+      # e espaço ("Ápice Gestor_..."), e não oferece opção de config. Aqui ele vira um nome ASCII
+      # estável, que é o que o scripts/instalar.ps1 espera.
+      - name: Renomeia e calcula SHA-256
         shell: pwsh
         run: |
-          $msi = Get-ChildItem src-tauri/target/release/bundle/msi/*.msi
-          if (-not $msi) { throw "Nenhum .msi gerado em src-tauri/target/release/bundle/msi" }
-          $msi | ForEach-Object {
-            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$h  $($_.Name)" | Out-File -Encoding utf8 -Append src-tauri/target/release/bundle/msi/SHA256SUMS.txt
-            "### $($_.Name)`n`nSHA-256 ``$h```n`nSem assinatura — só para Parallels/bancada." >> $env:GITHUB_STEP_SUMMARY
-          }
+          $msi = @(Get-ChildItem src-tauri/target/release/bundle/msi/*.msi)
+          if ($msi.Count -ne 1) { throw "Esperava 1 .msi em src-tauri/target/release/bundle/msi, achei $($msi.Count)" }
+          $versao = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $nome = "apice-gestor_${versao}_x64.msi"
+          New-Item -ItemType Directory -Force instalador | Out-Null
+          Copy-Item $msi[0].FullName "instalador/$nome"
+          $h = (Get-FileHash "instalador/$nome" -Algorithm SHA256).Hash.ToLower()
+          "$h  $nome" | Out-File -Encoding utf8NoBOM instalador/SHA256SUMS.txt
+          "### $nome`n`nSHA-256 ``$h```n`nGerado de ``$($msi[0].Name)``. Sem assinatura — só para Parallels/bancada." >> $env:GITHUB_STEP_SUMMARY
 
       - uses: actions/upload-artifact@v6
         with:
           name: apice-gestor-msi-${{ github.sha }}
           path: |
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/msi/SHA256SUMS.txt
+            instalador/*.msi
+            instalador/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
