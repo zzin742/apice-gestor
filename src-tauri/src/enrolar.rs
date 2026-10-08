@@ -70,7 +70,7 @@ fn hostname() -> String {
 }
 
 #[cfg(windows)]
-fn sistema() -> String {
+pub(crate) fn sistema() -> String {
     const CHAVE: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
     let nome = registro(CHAVE, "ProductName").unwrap_or_else(|| "Windows".into());
     let versao = registro(CHAVE, "DisplayVersion").unwrap_or_default();
@@ -122,7 +122,7 @@ fn hostname() -> String {
 }
 
 #[cfg(not(windows))]
-fn sistema() -> String {
+pub(crate) fn sistema() -> String {
     format!("{} (desenvolvimento)", std::env::consts::OS)
 }
 

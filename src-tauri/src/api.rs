@@ -50,6 +50,9 @@ struct Cache {
 pub struct Api {
     cliente: reqwest::Client,
     cache: Mutex<Cache>,
+    /// Para o heartbeat (§5): última busca de tarefas que deu certo e último `error.code`.
+    pub tarefas_ok_em: Mutex<Option<String>>,
+    pub ultimo_erro: Mutex<Option<String>>,
 }
 
 impl Api {
@@ -63,15 +66,66 @@ impl Api {
             .timeout(Duration::from_secs(20))
             .build()
             .expect("cliente HTTP");
-        Self { cliente, cache: Mutex::default() }
+        Self {
+            cliente,
+            cache: Mutex::default(),
+            tarefas_ok_em: Mutex::default(),
+            ultimo_erro: Mutex::default(),
+        }
     }
 
     /// GET autenticado com `If-None-Match`. Sempre devolve o corpo completo: o `304` vira o
     /// corpo guardado, e a interface nunca vê um `304`.
     pub async fn get(&self, rota: &'static str) -> Result<Value, ErroApi> {
-        let base = base_url().ok_or_else(|| {
-            ErroApi::novo("server_error", "Endereço do Ápice Hub não configurado nesta versão.")
-        })?;
+        let resultado = self.get_sem_registro(rota).await;
+        match &resultado {
+            Ok(_) if rota == "me/tasks" => {
+                *self.tarefas_ok_em.lock().unwrap() = Some(agora());
+            }
+            Ok(_) => {}
+            Err(erro) => self.registrar_erro(erro),
+        }
+        resultado
+    }
+
+    /// POST autenticado, sem cache (heartbeat, §5).
+    pub async fn post(&self, rota: &str, corpo: &Value) -> Result<Value, ErroApi> {
+        let resultado = self.post_sem_registro(rota, corpo).await;
+        if let Err(erro) = &resultado {
+            self.registrar_erro(erro);
+        }
+        resultado
+    }
+
+    async fn post_sem_registro(&self, rota: &str, corpo: &Value) -> Result<Value, ErroApi> {
+        let base = base_url().ok_or_else(sem_endereco)?;
+        let token = ler_token()?;
+        let resposta = self
+            .cliente
+            .post(format!("{base}/{rota}"))
+            .bearer_auth(&token)
+            .header("X-Gestor-Api", API_VERSAO)
+            .json(corpo)
+            .send()
+            .await
+            .map_err(|_| sem_conexao())?;
+        let status = resposta.status();
+        let corpo: Option<Value> = resposta.json().await.ok();
+        if status.is_success() {
+            return Ok(corpo.unwrap_or_default());
+        }
+        Err(erro_do_corpo(status, corpo.as_ref()))
+    }
+
+    /// `not_enrolled` é nosso, não veio do Hub: não entra em `last_error_code`.
+    fn registrar_erro(&self, erro: &ErroApi) {
+        if erro.code != "not_enrolled" {
+            *self.ultimo_erro.lock().unwrap() = Some(erro.code.clone());
+        }
+    }
+
+    async fn get_sem_registro(&self, rota: &'static str) -> Result<Value, ErroApi> {
+        let base = base_url().ok_or_else(sem_endereco)?;
         let token = ler_token()?;
         let dono = impressao(&token);
 
@@ -92,9 +146,7 @@ impl Api {
             pedido = pedido.header(header::IF_NONE_MATCH, etag);
         }
 
-        let resposta = pedido.send().await.map_err(|_| {
-            ErroApi::novo("unavailable", "Sem conexão com o Ápice Hub.")
-        })?;
+        let resposta = pedido.send().await.map_err(|_| sem_conexao())?;
         let status = resposta.status();
 
         if status == StatusCode::NOT_MODIFIED {
@@ -146,9 +198,7 @@ pub struct Enrolado {
 /// `POST enroll` (contrato §2): troca o código pelo token e grava o token no keychain.
 /// Não repete nada sozinho; quem decide repetir é o chamador (`enrolar.rs`).
 pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
-    let base = base_url().ok_or_else(|| {
-        ErroApi::novo("server_error", "Endereço do Ápice Hub não configurado nesta versão.")
-    })?;
+    let base = base_url().ok_or_else(sem_endereco)?;
     let resposta = Api::new()
         .cliente
         .post(format!("{base}/enroll"))
@@ -156,7 +206,7 @@ pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
         .json(&serde_json::json!({ "code": codigo, "device": device }))
         .send()
         .await
-        .map_err(|_| ErroApi::novo("unavailable", "Sem conexão com o Ápice Hub."))?;
+        .map_err(|_| sem_conexao())?;
     let status = resposta.status();
     let corpo: Option<Value> = resposta.json().await.ok();
     if !status.is_success() {
@@ -172,6 +222,19 @@ pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
         corpo["person"].get(campo).and_then(Value::as_str).unwrap_or("").to_owned()
     };
     Ok(Enrolado { nome: pessoa("display_name"), departamento: pessoa("department") })
+}
+
+fn sem_endereco() -> ErroApi {
+    ErroApi::novo("server_error", "Endereço do Ápice Hub não configurado nesta versão.")
+}
+
+fn sem_conexao() -> ErroApi {
+    ErroApi::novo("unavailable", "Sem conexão com o Ápice Hub.")
+}
+
+/// Agora, ISO 8601 com offset (contrato §1: instantes sempre com offset).
+pub fn agora() -> String {
+    chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false)
 }
 
 /// Corpo de erro do contrato; se não vier, o `code` sai do status HTTP.

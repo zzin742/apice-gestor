@@ -1,4 +1,5 @@
 mod api;
+mod batimento;
 mod enrolar;
 mod janela;
 
@@ -30,6 +31,13 @@ fn painel_arrastar(window: WebviewWindow) -> Result<(), String> {
 #[tauri::command]
 fn painel_posicao(window: WebviewWindow) -> Result<janela::Posicao, String> {
     janela::posicao(&window).map_err(|e| e.to_string())
+}
+
+/// Sinais da interface para o heartbeat: `aberto` (o usuário abriu o cartão) ou `bom_dia`.
+/// Sem retorno; a interface ignora falha.
+#[tauri::command]
+fn painel_evento(telemetria: State<'_, batimento::Telemetria>, tipo: String) {
+    telemetria.registrar(&tipo);
 }
 
 /// `GET me/tasks`: o cartão inteiro, já resolvido pelo Hub (contrato §3).
@@ -85,17 +93,51 @@ pub fn usar_console_do_pai() {
     }
 }
 
+/// Só no Windows de verdade (build de release): nunca grava item de login no Mac de desenvolvimento.
+fn ligar_autostart(app: &tauri::App) {
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let autostart = app.autolaunch();
+        if !autostart.is_enabled().unwrap_or(true) {
+            let _ = autostart.enable();
+        }
+    }
+    #[cfg(not(all(windows, not(debug_assertions))))]
+    let _ = app;
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Primeiro plugin, como pede o single-instance: a segunda abertura só traz a existente
+        // para a frente (a não ser que o Hub tenha pausado esta máquina).
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if batimento::pausado(app) {
+                return;
+            }
+            if let Some(painel) = app.get_webview_window("main") {
+                let _ = painel.show();
+                let _ = painel.set_focus();
+            }
+        }))
+        // Inicia com a sessão do Windows (chave Run do usuário); `--sessao` marca esse início.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--sessao"]),
+        ))
+        // Só o esqueleto: nada dispara notificação ainda.
+        .plugin(tauri_plugin_notification::init())
         // Abre a tarefa no navegador padrão; o escopo fica em capabilities/default.json.
         .plugin(tauri_plugin_opener::init())
         .manage(api::Api::new())
         .manage(janela::Movimento::default())
+        .manage(batimento::Telemetria::default())
         .invoke_handler(tauri::generate_handler![
             painel_tamanho,
             painel_arrastar,
             painel_posicao,
+            painel_evento,
             gestor_tarefas,
             gestor_config
         ])
@@ -112,6 +154,8 @@ pub fn run() {
             });
             janela::vigiar_monitores(painel);
             bandeja(app)?;
+            ligar_autostart(app);
+            batimento::iniciar(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())
