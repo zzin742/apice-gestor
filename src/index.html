@@ -157,6 +157,7 @@
   .g h2{margin:0 2px 5px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:700;display:flex;gap:6px;align-items:center}
   .g.v h2{color:var(--crit)}
   .g h2 .c{font:600 10.5px var(--mono);color:var(--ink-2)}
+  .task[hidden]{display:none}
   .task{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:center;padding:7px 6px;border-radius:8px;cursor:pointer}
   .task:hover{background:color-mix(in srgb,var(--ink-3) 12%,transparent)}
   .task:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
@@ -238,11 +239,11 @@
           <div class="c-head">
             <div class="greet"><span id="greetName">Bom dia</span><small id="greetDate"></small></div>
             <div class="c-top"><b>Minhas tarefas</b><span id="stampTxt">carregando…</span></div>
-            <div class="prog"><div class="lbl"><span>Concluídas hoje</span><b id="progTxt">0 de 0</b></div><div class="bar"><i id="progBar" style="width:0%"></i></div></div>
+            <div class="prog"><div class="lbl"><span>Concluídas hoje</span><b id="progTxt">–</b></div><div class="bar"><i id="progBar" style="width:0%"></i></div></div>
             <div class="tabs" role="tablist" aria-label="Período">
-              <button role="tab" aria-selected="true" data-tab="hoje" id="tab-hoje">Hoje <span class="c" id="cHoje">0</span></button>
-              <button role="tab" aria-selected="false" data-tab="semana" id="tab-semana">Semana <span class="c" id="cSemana">0</span></button>
-              <button role="tab" aria-selected="false" data-tab="todas" id="tab-todas">Todas <span class="c" id="cTodas">0</span></button>
+              <button role="tab" aria-selected="true" data-tab="hoje" id="tab-hoje">Hoje <span class="c" id="cHoje">–</span></button>
+              <button role="tab" aria-selected="false" data-tab="semana" id="tab-semana">Semana <span class="c" id="cSemana">–</span></button>
+              <button role="tab" aria-selected="false" data-tab="todas" id="tab-todas">Todas <span class="c" id="cTodas">–</span></button>
             </div>
           </div>
           <div class="banner" role="status">
@@ -266,7 +267,7 @@
 
         <button class="cap" id="cap" type="button" aria-expanded="false" aria-controls="card" aria-label="Abrir minhas tarefas">
           <svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/><circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="47.1" stroke-dashoffset="47.1" id="ringFg"/></svg>
-          <span class="t"><em><b id="capOv">0</b> vencidas</em><s>·</s><span><b id="capHoje">0</b> hoje</span></span>
+          <span class="t"><em><b id="capOv">–</b> vencidas</em><s>·</s><span><b id="capHoje">–</b> hoje</span></span>
           <span class="sync" aria-hidden="true"></span>
         </button>
       </div>
@@ -310,11 +311,12 @@
   })();
 </script>
 <script type="module">
-  import { createClient } from './api/client.js';
+  import { createClient, tabsOf, MOCK_BASE_URL } from './api/client.js';
 
   /* ---------- API (mock da Ponte em dev; token virá do keychain pela casca) ---------- */
   var qs=new URLSearchParams(location.search);
-  var api=createClient({baseUrl:qs.get('api')||'http://127.0.0.1:8787/api/gestor',token:qs.get('token')||'dev'});
+  // ?token=gdt_mock_* troca o cenário do mock (mock/README.md). Token real: keychain, via casca — nunca aqui.
+  var api=createClient({baseUrl:qs.get('api')||MOCK_BASE_URL,token:qs.get('token')||'gdt_mock_rafael',agentVersion:'0.1.0'});
   var cfg={poll_interval_seconds:600,morning:{enabled:true,duration_seconds:10,once_per_day:true,not_before:'07:00'}};
 
   /* ---------- formatação (dado já resolvido pelo servidor; aqui só texto) ---------- */
@@ -339,7 +341,7 @@
   }
   function rowHtml(t){
     var cls='task'+(t.status==='done'?' ok':t.bucket==='overdue'?' ov':t.bucket==='later'?' far':'');
-    var sub=esc(t.client)+(t.competence?' · comp. '+esc(t.competence.slice(5)+'/'+t.competence.slice(0,4)):'')+(t.status==='impediment'?' · impedida':'');
+    var sub=esc(t.client)+(t.competence&&t.title.indexOf('comp.')<0?' · comp. '+esc(t.competence.slice(5)+'/'+t.competence.slice(0,4)):'')+(t.status==='impediment'?' · impedida':'');
     return '<div class="'+cls+'" tabindex="0" data-id="'+esc(t.id)+'" data-n="'+esc((t.title+' '+t.client).toLowerCase())+'"><span class="dot"></span><div class="tm"><b>'+esc(t.title)+'</b><small>'+sub+'</small></div><span class="tag">'+tagOf(t)+'<span class="go">↗</span></span></div>';
   }
   function group(title,list,cls){return '<div class="g'+(cls?' '+cls:'')+'"><h2>'+title+' <span class="c">'+list.length+'</span></h2>'+list.map(rowHtml).join('')+'</div>';}
@@ -359,21 +361,19 @@
     document.getElementById('ringFg').setAttribute('stroke-dashoffset',(47.1*(1-pct)).toFixed(1));
     document.getElementById('progTxt').textContent=s.done_today+' de '+s.today_total;
     document.getElementById('progBar').style.width=Math.round(pct*100)+'%';
-    // Hoje = vencidas + hoje
-    var ov=d.tasks.filter(function(t){return t.bucket==='overdue'}),hj=d.tasks.filter(function(t){return t.bucket==='today'});
-    hj=hj.filter(function(t){return t.status!=='done'}).concat(hj.filter(function(t){return t.status==='done'}));
-    document.getElementById('cHoje').textContent=s.overdue+s.due_today;
-    document.getElementById('pane-hoje').innerHTML=(ov.length?group('Vencidas',ov,'v'):'')+(hj.length?group('Hoje',hj):'')||'<div class="empty">Nada pra hoje.</div>';
+    var tb=tabsOf(d);
+    // Hoje = vencidas + hoje (abertas antes das concluídas)
+    document.getElementById('cHoje').textContent=tb.hoje.count;
+    document.getElementById('pane-hoje').innerHTML=(tb.hoje.overdue.length?group('Vencidas',tb.hoje.overdue,'v'):'')+(tb.hoje.today.length?group('Hoje',tb.hoje.today):'')||'<div class="empty">Nada pra hoje.</div>';
     // Semana, por dia
-    var week=d.tasks.filter(function(t){return t.bucket==='week'}),groups={},order=[];
-    week.forEach(function(t){if(!groups[t.due_date]){groups[t.due_date]=[];order.push(t.due_date);}groups[t.due_date].push(t);});
-    order.sort();
+    var groups={},order=[];
+    tb.semana.tasks.forEach(function(t){if(!groups[t.due_date]){groups[t.due_date]=[];order.push(t.due_date);}groups[t.due_date].push(t);});
     document.getElementById('pane-semana').innerHTML=order.map(function(k){var x=ymd(k);return group(cap(DOW[x.getDay()])+' '+x.getDate(),groups[k]);}).join('')||'<div class="empty">Nada agendado pra semana.</div>';
-    document.getElementById('cSemana').textContent=week.length;
+    document.getElementById('cSemana').textContent=tb.semana.count;
     // Todas = não concluídas
-    all=d.tasks.filter(function(t){return t.status!=='done'});
+    all=tb.todas.tasks;
     document.getElementById('todasList').innerHTML=all.map(rowHtml).join('')+'<div class="empty" id="noRes" hidden>Nada com esse nome.</div>';
-    document.getElementById('cTodas').textContent=s.open_total;
+    document.getElementById('cTodas').textContent=tb.todas.count;
     filter();
     // frescor
     var last=new Date(d.sync.last_sync_at);
