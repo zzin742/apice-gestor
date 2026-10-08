@@ -9,7 +9,8 @@ esperado: **pare, anote (seção 6) e não tente consertar**.
 ## O que você recebe
 
 - `apice-gestor_0.1.0_x64.msi` e `SHA256SUMS.txt`: artefato da **run manual do build-msi** que o
-  Vigia indicar (número da run: `__________`). **Não use .msi de outra run**: só a manual tem o
+  Vigia indicou: **run [37792703891](https://github.com/zzin742/apice-gestor/actions/runs/37792703891)**,
+  SHA-256 `3bbeafa2309aadb8654deef695d09db2cf5af7b465b89ffd303dbad86aecdc98`. **Não use .msi de outra run**: só a manual tem o
   endereço do mock embutido.
 - O **código de enrolamento** do mock: `K7QM-4XPA`. Vale **uma vez**, só para o mock do Mac do
   José Luiz; não serve no Hub de verdade.
