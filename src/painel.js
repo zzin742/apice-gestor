@@ -1,7 +1,7 @@
 // Comportamento da cápsula e do cartão: dados do contrato, três estados, abas, busca, abrir no Gestta.
 // Usado por painel.html (janela da casca) e index.html (protótipo de revisão no navegador).
 import { tabsOf } from './api/client.js';
-import { api, abrirNoNavegador, ajustarJanela, arrastarJanela, posicaoJanela, aoMudarPosicao } from './transporte.js';
+import { api, abrirNoNavegador, ajustarJanela, arrastarJanela, posicaoJanela, aoMudarPosicao, avisarEvento } from './transporte.js';
 
 var cfg={poll_interval_seconds:600,morning:{enabled:true,duration_seconds:10,once_per_day:true,not_before:'07:00'}};
 
@@ -185,8 +185,12 @@ function aplicarDirecao(){
 function ancora(){return (dir.v==='baixo'?'superior':'inferior')+'-'+(dir.h==='direita'?'esquerdo':'direito');}
 function tamanho(o){var m=medida(o);m.ancora=ancora();return ajustarJanela(m);}
 
+// 'aberto' conta só a passagem de fechado para aberto por ação do usuário (hover ou clique); bom-dia não conta.
+var visivel=false;
 function paint(){
   var o=pinned||hover||clicked;capBtn.setAttribute('aria-expanded',o?'true':'false');
+  if(o&&!visivel&&!pinned)avisarEvento('aberto');
+  visivel=o;
   if(!janela){if(o&&!hud.classList.contains('open'))aplicarDirecao();hud.classList.toggle('open',o);return;}
   if(o===aberto)return;aberto=o;var n=++seq;
   if(o){aplicarDirecao();tamanho(true).catch(falhaJanela).then(function(){if(n===seq)hud.classList.add('open');});}
@@ -202,7 +206,7 @@ function remedir(){if(janela&&!aberto&&!arrastando)tamanho(false).catch(falhaJan
    provavelmente não chega) ou o pointerup, se vier. O clique que sobra de um arraste é engolido. */
 var LIMIAR=5,toque=null,arrastando=false,engolirClique=false;
 function iniciarArraste(){
-  arrastando=true;engolirClique=true;
+  arrastando=true;engolirClique=true;visivel=false; // o cartão fecha aqui sem passar pelo paint()
   clearTimeout(mt);morning=false;pinned=false;clicked=false;hover=false;applyMode();
   capBtn.setAttribute('aria-expanded','false');
   var antes=Promise.resolve();
@@ -231,6 +235,7 @@ function applyMode(){
   var bs=document.querySelectorAll('.seg button');for(var i=0;i<bs.length;i++)bs[i].setAttribute('aria-pressed',bs[i].getAttribute('data-mode')===m?'true':'false');
 }
 function goodMorning(){
+  avisarEvento('bom_dia');
   morning=true;pinned=true;clicked=false;hover=false;showTab('hoje');applyMode();paint();
   var d=document.querySelector('.auto .drain i');if(d){d.style.animation='none';void d.offsetWidth;d.style.animation='';}
   clearTimeout(mt);mt=setTimeout(endMorning,(cfg.morning.duration_seconds||10)*1000);
