@@ -29,9 +29,9 @@ fn base_url() -> Option<&'static str> {
 /// Erro como a interface espera: `{ code, message }`, com os `code` do contrato (§1.4).
 #[derive(Debug, Serialize)]
 pub struct ErroApi {
-    code: String,
-    message: String,
-    retry_after_seconds: Option<u64>,
+    pub code: String,
+    pub message: String,
+    pub retry_after_seconds: Option<u64>,
 }
 
 impl ErroApi {
@@ -137,6 +137,43 @@ impl Api {
     }
 }
 
+/// Quem o Hub reconheceu no enrolamento.
+pub struct Enrolado {
+    pub nome: String,
+    pub departamento: String,
+}
+
+/// `POST enroll` (contrato §2): troca o código pelo token e grava o token no keychain.
+/// Não repete nada sozinho; quem decide repetir é o chamador (`enrolar.rs`).
+pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
+    let base = base_url().ok_or_else(|| {
+        ErroApi::novo("server_error", "Endereço do Ápice Hub não configurado nesta versão.")
+    })?;
+    let resposta = Api::new()
+        .cliente
+        .post(format!("{base}/enroll"))
+        .header("X-Gestor-Api", API_VERSAO)
+        .json(&serde_json::json!({ "code": codigo, "device": device }))
+        .send()
+        .await
+        .map_err(|_| ErroApi::novo("unavailable", "Sem conexão com o Ápice Hub."))?;
+    let status = resposta.status();
+    let corpo: Option<Value> = resposta.json().await.ok();
+    if !status.is_success() {
+        return Err(erro_do_corpo(status, corpo.as_ref()));
+    }
+    let corpo = corpo.unwrap_or_default();
+    let token = corpo
+        .get("token")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ErroApi::novo("server_error", "O Ápice Hub não devolveu o token."))?;
+    keychain()?.set_password(token).map_err(|_| erro_keychain())?;
+    let pessoa = |campo: &str| {
+        corpo["person"].get(campo).and_then(Value::as_str).unwrap_or("").to_owned()
+    };
+    Ok(Enrolado { nome: pessoa("display_name"), departamento: pessoa("department") })
+}
+
 /// Corpo de erro do contrato; se não vier, o `code` sai do status HTTP.
 fn erro_do_corpo(status: StatusCode, corpo: Option<&Value>) -> ErroApi {
     let erro = corpo.and_then(|c| c.get("error"));
@@ -162,14 +199,15 @@ fn keychain() -> Result<keyring::Entry, ErroApi> {
 }
 
 fn erro_keychain() -> ErroApi {
-    ErroApi::novo("server_error", "Não foi possível ler o cofre de credenciais do Windows.")
+    ErroApi::novo("server_error", "Não foi possível usar o cofre de credenciais do Windows.")
 }
 
 fn ler_token() -> Result<String, ErroApi> {
     match keychain()?.get_password() {
         Ok(token) => Ok(token),
+        // Código local, fora do contrato: sem token aqui não é o 401 do Hub (combinado com a Prisma).
         Err(keyring::Error::NoEntry) => Err(ErroApi::novo(
-            "unauthorized",
+            "not_enrolled",
             "Este computador ainda não foi conectado ao Ápice Hub.",
         )),
         Err(_) => Err(erro_keychain()),

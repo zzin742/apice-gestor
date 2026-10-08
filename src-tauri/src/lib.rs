@@ -1,4 +1,5 @@
 mod api;
+mod enrolar;
 
 use tauri::{Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 
@@ -63,6 +64,26 @@ fn mover(window: &WebviewWindow, x: i32, y: i32, w: i32, h: i32) -> tauri::Resul
 fn mover(window: &WebviewWindow, x: i32, y: i32, w: i32, h: i32) -> tauri::Result<()> {
     window.set_size(PhysicalSize::new(w as u32, h as u32))?;
     window.set_position(PhysicalPosition::new(x, y))
+}
+
+/// `--enrolar <código>`: devolve o código de saída do processo.
+pub fn enrolar(codigo: &str) -> i32 {
+    enrolar::executar(codigo)
+}
+
+/// Em release o executável é de janela (sem console). Se o stdout não veio redirecionado,
+/// escreve no console de quem chamou (PowerShell/cmd), para o `--enrolar` aparecer na tela.
+pub fn usar_console_do_pai() {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::Console::{
+            AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE,
+        };
+        let saida = GetStdHandle(STD_OUTPUT_HANDLE);
+        if saida.is_null() || saida == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
