@@ -1,7 +1,7 @@
 // Comportamento da cápsula e do cartão: dados do contrato, três estados, abas, busca, abrir no Gestta.
 // Usado por painel.html (janela da casca) e index.html (protótipo de revisão no navegador).
 import { tabsOf } from './api/client.js';
-import { api, abrirNoNavegador, ajustarJanela } from './transporte.js';
+import { api, abrirNoNavegador, ajustarJanela, arrastarJanela, posicaoJanela, aoMudarPosicao } from './transporte.js';
 
 var cfg={poll_interval_seconds:600,morning:{enabled:true,duration_seconds:10,once_per_day:true,not_before:'07:00'}};
 
@@ -161,15 +161,67 @@ function depoisDaTransicao(el,fn){
   function fim(){if(feito)return;feito=true;clearTimeout(t);el.removeEventListener('transitionend',fim);fn();}
   el.addEventListener('transitionend',fim);
 }
+/* ---------- direção do cartão (a cápsula pode estar em qualquer lugar da tela) ----------
+   A cápsula mora no canto da janela que a casca mantém parado (ancora), com a mesma folga aberta ou
+   recolhida; por isso ela não se mexe quando o cartão abre. Cápsula na metade de cima da área útil:
+   o cartão abre para baixo; na metade esquerda: para a direita. A direção só muda com o cartão fechado. */
+var pos=null,dir={v:'cima',h:'esquerda'};
+function direcao(){
+  if(!pos){ // fora da casca: padrão, ou simulado por ?abre=baixo-direita
+    var a=(new URLSearchParams(location.search).get('abre')||'').split('-');
+    return {v:a[0]==='baixo'?'baixo':'cima',h:a[1]==='direita'?'direita':'esquerda'};
+  }
+  // centro da cápsula, a partir do canto da janela onde ela está agora
+  var cw=capBtn.offsetWidth,ch=capBtn.offsetHeight;
+  var cx=dir.h==='direita'?pos.x+FOLGA.lado+cw/2:pos.x+pos.largura-FOLGA.lado-cw/2;
+  var cy=dir.v==='baixo'?pos.y+FOLGA.topo+ch/2:pos.y+pos.altura-FOLGA.base-ch/2;
+  return {v:cy<pos.area.altura/2?'baixo':'cima',h:cx<pos.area.largura/2?'direita':'esquerda'};
+}
+function aplicarDirecao(){
+  dir=direcao();
+  if(dir.v==='baixo')hud.setAttribute('data-v','baixo');else hud.removeAttribute('data-v');
+  if(dir.h==='direita')hud.setAttribute('data-h','direita');else hud.removeAttribute('data-h');
+}
+function ancora(){return (dir.v==='baixo'?'superior':'inferior')+'-'+(dir.h==='direita'?'esquerdo':'direito');}
+function tamanho(o){var m=medida(o);m.ancora=ancora();return ajustarJanela(m);}
+
 function paint(){
   var o=pinned||hover||clicked;capBtn.setAttribute('aria-expanded',o?'true':'false');
-  if(!janela){hud.classList.toggle('open',o);return;}
+  if(!janela){if(o&&!hud.classList.contains('open'))aplicarDirecao();hud.classList.toggle('open',o);return;}
   if(o===aberto)return;aberto=o;var n=++seq;
-  if(o){ajustarJanela(medida(true)).catch(falhaJanela).then(function(){if(n===seq)hud.classList.add('open');});}
-  else{hud.classList.remove('open');depoisDaTransicao(document.getElementById('card'),function(){if(n===seq)ajustarJanela(medida(false)).catch(falhaJanela);});}
+  if(o){aplicarDirecao();tamanho(true).catch(falhaJanela).then(function(){if(n===seq)hud.classList.add('open');});}
+  else{hud.classList.remove('open');depoisDaTransicao(document.getElementById('card'),function(){if(n===seq)tamanho(false).catch(falhaJanela);});}
 }
 // a cápsula muda de largura com os números; recolhida, a janela acompanha
-function remedir(){if(janela&&!aberto)ajustarJanela(medida(false)).catch(falhaJanela);}
+function remedir(){if(janela&&!aberto&&!arrastando)tamanho(false).catch(falhaJanela);}
+
+/* ---------- arraste da cápsula ----------
+   Clique curto abre o cartão; passou de LIMIAR px com o botão pressionado, vira arraste nativo (casca).
+   Antes de arrastar, o cartão recolhe sem animação e a janela volta ao tamanho da cápsula, para ela não
+   mudar de tamanho durante o arraste. O fim é o evento 'painel://posicao' (no Windows o pointerup
+   provavelmente não chega) ou o pointerup, se vier. O clique que sobra de um arraste é engolido. */
+var LIMIAR=5,toque=null,arrastando=false,engolirClique=false;
+function iniciarArraste(){
+  arrastando=true;engolirClique=true;
+  clearTimeout(mt);morning=false;pinned=false;clicked=false;hover=false;applyMode();
+  capBtn.setAttribute('aria-expanded','false');
+  var antes=Promise.resolve();
+  if(hud.classList.contains('open')||aberto){
+    seq++;aberto=false;
+    hud.classList.add('sem-anim');hud.classList.remove('open');void hud.offsetWidth;hud.classList.remove('sem-anim');
+    if(janela)antes=tamanho(false);
+  }
+  antes.then(arrastarJanela).catch(function(e){console.warn('painel_arrastar',e);fimArraste();});
+}
+function fimArraste(){arrastando=false;toque=null;}
+capBtn.addEventListener('pointerdown',function(e){if(e.button!==0)return;toque={x:e.screenX,y:e.screenY};engolirClique=false;});
+capBtn.addEventListener('pointermove',function(e){
+  if(!toque||arrastando||!(e.buttons&1))return;
+  if(Math.hypot(e.screenX-toque.x,e.screenY-toque.y)>=LIMIAR)iniciarArraste();
+});
+document.addEventListener('pointerup',function(){toque=null;if(arrastando)fimArraste();});
+aoMudarPosicao(function(p){pos=p;if(arrastando)fimArraste();});
+if(janela)posicaoJanela().then(function(p){if(p)pos=p;},function(e){console.warn('painel_posicao',e);});
 if(janela&&document.fonts)document.fonts.ready.then(remedir); // a fonte muda a largura da cápsula
 function applyMode(){
   var m=forced||(stale?'stale':morning?'morning':'idle');
@@ -191,8 +243,9 @@ if(seg)seg.addEventListener('click',function(e){
   endMorning();forced=(m==='idle')?null:m;
   if(m==='morning'){forced=null;goodMorning();}else{applyMode();paint();}
 });
-capBtn.addEventListener('click',function(){if(pinned){endMorning();}else{clicked=!clicked;}paint();});
-if(canHover){hud.addEventListener('mouseenter',function(){hover=true;paint();});hud.addEventListener('mouseleave',function(){hover=false;paint();});}
+capBtn.addEventListener('click',function(){if(engolirClique){engolirClique=false;return;}if(pinned){endMorning();}else{clicked=!clicked;}paint();});
+// com o botão pressionado pode ser arraste: o hover não abre
+if(canHover){hud.addEventListener('mouseenter',function(){if(arrastando||toque)return;hover=true;paint();});hud.addEventListener('mouseleave',function(){if(arrastando)return;hover=false;paint();});}
 document.addEventListener('keydown',function(e){if(e.key==='Escape'){clicked=false;endMorning();paint();}});
 
 /* ---------- início ---------- */

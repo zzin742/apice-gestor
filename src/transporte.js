@@ -41,9 +41,31 @@ export function abrirNoNavegador(url) {
 
 // Tamanho da janela da casca em px lógicos (o Chassi cuida do DPI e mantém o canto inferior direito).
 // Fora da casca não há janela: guarda o pedido para revisão no navegador.
-export function ajustarJanela({ largura, altura }) {
-  if (tauri?.core?.invoke) return tauri.core.invoke('painel_tamanho', { largura, altura });
-  globalThis.__painelTamanho = { largura, altura };
-  globalThis.dispatchEvent(new CustomEvent('painel-tamanho', { detail: { largura, altura } }));
+// ancora = canto da janela que fica parado ('inferior-direito' | 'inferior-esquerdo' | 'superior-direito' | 'superior-esquerdo').
+export function ajustarJanela({ largura, altura, ancora = 'inferior-direito' }) {
+  if (tauri?.core?.invoke) return tauri.core.invoke('painel_tamanho', { largura, altura, ancora });
+  globalThis.__painelTamanho = { largura, altura, ancora };
+  globalThis.dispatchEvent(new CustomEvent('painel-tamanho', { detail: { largura, altura, ancora } }));
   return Promise.resolve();
+}
+
+// Arraste nativo da janela (a casca chama start_dragging). Fora da casca só conta, para revisão.
+export function arrastarJanela() {
+  if (tauri?.core?.invoke) return tauri.core.invoke('painel_arrastar');
+  globalThis.__painelArrastes = (globalThis.__painelArrastes || 0) + 1;
+  return Promise.resolve();
+}
+
+// Posição da janela: { x, y, largura, altura, area: { largura, altura } }, px lógicos, relativos à área útil.
+// Fora da casca não há posição (null): a interface usa a direção padrão ou a simulada por ?abre=.
+export function posicaoJanela() {
+  if (tauri?.core?.invoke) return tauri.core.invoke('painel_posicao');
+  return Promise.resolve(globalThis.__painelPosicao || null);
+}
+
+// A casca emite 'painel://posicao' ~300 ms depois de a janela parar (arraste, 'Voltar ao canto', troca de monitor).
+export function aoMudarPosicao(fn) {
+  if (tauri?.event?.listen) return tauri.event.listen('painel://posicao', (e) => fn(e.payload));
+  globalThis.addEventListener('painel-posicao', (e) => fn(e.detail));
+  return Promise.resolve(() => {});
 }

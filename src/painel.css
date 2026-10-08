@@ -61,9 +61,17 @@
   background:var(--glass);backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4);
   border:1px solid var(--glass-line);border-radius:16px;box-shadow:var(--glass-shadow);
   display:flex;flex-direction:column;overflow:hidden;
-  transform:translateY(8px) scale(.98);transform-origin:100% 100%;opacity:0;pointer-events:none;transition:transform .2s ease,opacity .16s ease}
+  transform:translateY(var(--ty,8px)) scale(.98);transform-origin:var(--ox,100%) var(--oy,100%);opacity:0;pointer-events:none;transition:transform .2s ease,opacity .16s ease}
 .hud.open .card{transform:none;opacity:1;pointer-events:auto}
 .card::after{content:"";position:absolute;left:0;right:0;top:100%;height:12px} /* fecha o vão até a cápsula pro mouse não "sair" no caminho */
+/* Direção do cartão (a cápsula pode ser arrastada): data-v="baixo" abre para baixo, data-h="direita" abre para a direita.
+   Sem atributo = cima/esquerda, o desenho aprovado. */
+.hud[data-v="baixo"]{justify-content:flex-start}
+.hud[data-v="baixo"] .card{bottom:auto;top:44px;--ty:-8px;--oy:0%}
+.hud[data-v="baixo"] .card::after{top:auto;bottom:100%}
+.hud[data-h="direita"]{align-items:flex-start}
+.hud[data-h="direita"] .card{right:auto;left:0;--ox:0%}
+.hud.sem-anim .card{transition:none}
 @media (prefers-reduced-motion:reduce){.card,.cap{transition:none}}
 
 .c-head{padding:13px 14px 8px;flex:none}
