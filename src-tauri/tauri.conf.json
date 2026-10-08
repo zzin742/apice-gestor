@@ -13,14 +13,23 @@
       {
         "label": "main",
         "title": "Ápice Gestor",
-        "width": 1120,
-        "height": 860,
-        "resizable": true
+        "url": "painel.html",
+        "width": 240,
+        "height": 82,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
