@@ -67,7 +67,9 @@ function Escrever([string]$texto, [string]$cor = 'Gray') {
     try {
         if (-not (Test-Path $PastaLog)) { New-Item -ItemType Directory -Force $PastaLog | Out-Null }
         "$(Get-Date -Format s)  [$env:USERNAME]  $texto" | Add-Content -Encoding UTF8 (Join-Path $PastaLog 'instalar.log')
-    } catch { }   # sem permissão no ProgramData na etapa sem elevação: só a tela
+    } catch {
+        Write-Verbose "Sem log em disco: $($_.Exception.Message)"   # sem permissão no ProgramData: só a tela
+    }
 }
 
 function EhAdmin {
@@ -88,7 +90,7 @@ function VersaoDoMsi([string]$caminho) {
 }
 
 function VersaoInstalada {
-    try { return VersaoInstaladaCom } catch { }
+    try { return VersaoInstaladaCom } catch { Write-Verbose "COM do Windows Installer falhou; tentando o registro." }
     $raizes = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
               'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
     $app = Get-ItemProperty $raizes -ErrorAction SilentlyContinue |
