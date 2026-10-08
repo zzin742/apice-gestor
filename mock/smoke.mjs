@@ -5,6 +5,9 @@ process.env.MOCK_NOW ||= '2026-10-08T13:30';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, statSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createClient, tabsOf, GestorApiError } from '../src/api/client.js';
 import { businessHoursBetween, robotRun, now, spDate } from './data.mjs';
 
@@ -19,9 +22,10 @@ assert.equal(robotRun(sp('2026-10-08T06:59')).getTime(), sp('2026-10-07T16:04').
 console.log('  ✓ horas úteis e rodadas 07/10/13/16h (§3.5)');
 
 const servers = [];
+const stateDir = mkdtempSync(join(tmpdir(), 'gestor-mock-smoke-')); // nunca o ~/.apice-gestor-mock de verdade
 async function start(mockNow) {
   const port = 18787 + Math.floor(Math.random() * 20000);
-  const env = { ...process.env, MOCK_PORT: String(port), MOCK_NOW: mockNow };
+  const env = { ...process.env, MOCK_PORT: String(port), MOCK_NOW: mockNow, MOCK_HOST: '127.0.0.1', MOCK_STATE_DIR: stateDir };
   const srv = spawn(process.execPath, [fileURLToPath(new URL('./server.mjs', import.meta.url))], { env, stdio: ['ignore', 'pipe', 'inherit'] });
   servers.push(srv);
   await new Promise((ok) => srv.stdout.once('data', ok));
@@ -103,6 +107,15 @@ try {
   await expectErr(api('gdt_mock_velho_agente').getConfig(), 'upgrade_required');
   ok('erros de token (§1.4)');
 
+  // Token emitido sobrevive a reinício do mock; o arquivo guarda só o hash, com permissão 600.
+  const fresh = await start(process.env.MOCK_NOW);
+  const after = await createClient({ baseUrl: fresh, token: e.token }).getTasks();
+  assert.equal(after.person.id, 'pes_rafael');
+  const file = join(stateDir, 'issued.json'), raw = readFileSync(file, 'utf8');
+  assert.ok(!raw.includes(e.token) && !raw.includes('gdt_'), 'o arquivo não pode conter o token');
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  ok('token do enroll sobrevive a reinício (só SHA-256 em disco, 600)');
+
   // Virada do dia sem sync (§3 ETag, §3.1): mesma carteira, buckets novos, ETag diferente.
   const before = api('gdt_mock_rafael'), dayEnd = await before.getTasks();
   const b2 = await start('2026-10-08T23:59'), b3 = await start('2026-10-09T00:01');
@@ -119,4 +132,4 @@ try {
   void dayEnd;
 
   console.log(`\nMock OK — ${n} verificações.`);
-} finally { servers.forEach((s) => s.kill()); }
+} finally { servers.forEach((s) => s.kill()); rmSync(stateDir, { recursive: true, force: true }); }

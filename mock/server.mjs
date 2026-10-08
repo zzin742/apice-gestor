@@ -1,7 +1,10 @@
 // Mock local da API do Ápice Gestor — serve docs/contrato-api.md (v1) sem dependências.
-// Uso: npm run mock   (MOCK_PORT=8787, MOCK_NOW=2026-10-08T13:02 opcionais)
+// Uso: npm run mock   (MOCK_PORT=8787, MOCK_HOST, MOCK_NOW=2026-10-08T13:02, MOCK_STATE_DIR opcionais)
 import http from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { PEOPLE, TOKENS, CODES, now, spDate, spInstant, buildTasks, classify, businessHoursBetween, robotRun, ROBOT_RUNS } from './data.mjs';
 
 const PORT = Number(process.env.MOCK_PORT || 8787);
@@ -11,9 +14,24 @@ const STALE_AFTER_BUSINESS_HOURS = 6; // horas úteis, seg–sex 08–18 (§3.5)
 const CONFIG_VERSION = 'c-mock-1';
 const DEPARA_VERSION = 'dp-mock-1'; // versão do de-para dispositivo → pessoa → nome no Gestta
 
-// Estado em memória (some ao reiniciar): tokens emitidos por enroll e últimos heartbeats.
-const issued = new Map();   // token → person key
-const heartbeats = new Map(); // person/token → último corpo
+// Tokens emitidos pelo enroll sobrevivem a reinício: ficam FORA do git, em MOCK_STATE_DIR
+// (padrão ~/.apice-gestor-mock/issued.json). Como no Hub (§1.2), guarda-se só o SHA-256 do token.
+const STATE_DIR = process.env.MOCK_STATE_DIR || join(homedir(), '.apice-gestor-mock');
+const STATE_FILE = join(STATE_DIR, 'issued.json');
+const sha256 = (t) => createHash('sha256').update(t).digest('hex');
+const issued = new Map(); // sha256(token) → { person, device_id, hostname, enrolled_at }
+try {
+  for (const [h, v] of Object.entries(JSON.parse(readFileSync(STATE_FILE, 'utf8')))) issued.set(h, v);
+} catch (e) { if (e.code !== 'ENOENT') console.error(`Estado ilegível em ${STATE_FILE}: ${e.message}`); }
+
+function saveIssued() {
+  mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  const tmp = STATE_FILE + '.tmp';
+  writeFileSync(tmp, JSON.stringify(Object.fromEntries(issued), null, 2), { mode: 0o600 });
+  renameSync(tmp, STATE_FILE);
+}
+
+const heartbeats = new Map(); // pessoa → último corpo (só memória; é telemetria)
 
 const MESSAGES = {
   invalid_request: 'Requisição inválida.',
@@ -68,7 +86,8 @@ async function readJson(req) {
 function auth(req, res) {
   const m = /^Bearer (\S+)$/.exec(req.headers.authorization || '');
   if (!m) { fail(res, 'unauthorized'); return null; }
-  if (issued.has(m[1])) return { token: m[1], key: issued.get(m[1]) };
+  const known = issued.get(sha256(m[1]));
+  if (known) return { token: m[1], key: known.person };
   const t = TOKENS[m[1]];
   if (!t) { fail(res, 'unauthorized'); return null; }
   if (t.kind !== 'ok') { fail(res, t.kind); return null; }
@@ -154,10 +173,14 @@ const routes = {
     if (!c) return fail(res, 'invalid_code');
     if (c.kind !== 'ok') return fail(res, c.kind);
     const token = 'gdt_' + randomBytes(32).toString('base64url');
-    issued.set(token, c.person);
+    const device_id = 'dev_' + sha256(token).slice(0, 12);
+    issued.set(sha256(token), {
+      person: c.person, device_id, hostname: String(body.device.hostname ?? ''), enrolled_at: spInstant(now()),
+    });
+    saveIssued();
     send(res, 201, {
       api: API, token,
-      device_id: 'dev_' + createHash('sha1').update(token).digest('hex').slice(0, 12),
+      device_id,
       person: personOut(PEOPLE[c.person]),
     }, { 'Cache-Control': 'no-store' });
   },
@@ -185,6 +208,7 @@ const routes = {
   // Só do mock: inspeção rápida. Não existe no contrato.
   'GET /__mock': (req, res) => send(res, 200, {
     tokens: Object.keys(TOKENS), codes: Object.keys(CODES),
+    enrolled: [...issued.values()], // sem token: só pessoa, dispositivo e hostname
     heartbeats: Object.fromEntries(heartbeats), now: spInstant(now()),
   }),
 };
@@ -214,4 +238,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`Mock Ápice Gestor em http://${HOST}:${PORT}/api/gestor  (hoje = ${spDate(now())})`);
   console.log('Tokens: ' + Object.keys(TOKENS).join(', '));
+  console.log(`Dispositivos enrolados: ${issued.size} (estado em ${STATE_FILE})`);
 });

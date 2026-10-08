@@ -14,8 +14,16 @@ MOCK_PORT=9000 npm run mock
 npm run mock:smoke                   # sobe numa porta aleatória, confere tudo, derruba
 ```
 
+Para outra máquina da rede (bancada): `MOCK_HOST=0.0.0.0 MOCK_PORT=8787 node mock/server.mjs`.
+Prova de alcance: abrir `http://<ip-do-mac>:8787/__mock` no navegador da outra máquina.
+
+**Tokens do enroll sobrevivem a reinício:** ficam em `~/.apice-gestor-mock/issued.json` (fora do git;
+`MOCK_STATE_DIR` muda o lugar), carregado na subida. O arquivo guarda só o **SHA-256** de cada token,
+com pessoa, `device_id`, hostname e hora do enrolamento — nunca o token. Apagar o arquivo desenrola tudo.
+O smoke usa um diretório temporário próprio e não toca nesse.
+
 Da interface, use o cliente: `createClient({ baseUrl: MOCK_BASE_URL, token: 'gdt_mock_rafael' })`
-em `src/api/client.js`. `GET /__mock` (fora do contrato) lista tokens, códigos e heartbeats recebidos.
+em `src/api/client.js`. `GET /__mock` (fora do contrato, sem autenticação) lista tokens de cenário, códigos, dispositivos enrolados (sem token) e heartbeats recebidos.
 
 ## Tokens (`Authorization: Bearer …`)
 
@@ -36,7 +44,7 @@ em `src/api/client.js`. `GET /__mock` (fora do contrato) lista tokens, códigos 
 
 | Código | Resultado |
 |---|---|
-| `K7QM-4XPA` | 201 → Rafael (token novo, vale até reiniciar o mock) |
+| `K7QM-4XPA` | 201 → Rafael (token novo a cada uso; persiste entre reinícios) |
 | `B3NT-9ZQW` | 201 → Bianca |
 | `C4UN-2SLM` | 201 → Caio |
 | `VENC-7DQX` | 410 `code_expired` |
