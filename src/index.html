@@ -110,6 +110,7 @@
   .ring .fg{stroke:var(--ok);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%}
   .cap .t{font-size:12.5px;font-weight:600;letter-spacing:-.005em;white-space:nowrap;display:flex;gap:6px;align-items:baseline}
   .cap .t em{font-style:normal;color:var(--crit)}
+  .cap .t em.zero,.g.v h2.zero{color:var(--ink-3)}
   .cap .t s{text-decoration:none;color:var(--ink-3);font-weight:500}
   .cap .t b{font-weight:700;font-family:var(--mono);font-variant-numeric:tabular-nums}
   .sync{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none}
@@ -186,7 +187,7 @@
   .c-foot{display:flex;justify-content:space-between;align-items:center;padding:7px 14px 9px;font:600 10px var(--mono);color:var(--ink-3);letter-spacing:.04em;border-top:1px solid color-mix(in srgb,var(--ink-3) 20%,transparent);flex:none}
   .c-foot .ex{border:1px solid color-mix(in srgb,var(--ink-3) 35%,transparent);border-radius:4px;padding:1px 5px;text-transform:uppercase}
 
-  [data-mode="morning"] .greet,[data-mode="morning"] .auto{display:block}
+  [data-mode="morning"] .greet,[data-mode="morning"] .auto,[data-bomdia] .greet,[data-bomdia] .auto{display:block}
   [data-mode="stale"] .banner{display:flex}
   [data-mode="stale"] .sync{background:var(--warn)}
   [data-mode="stale"] .cap .t s{color:var(--warn)}
@@ -262,7 +263,7 @@
           </div>
 
           <div class="auto">Recolhe sozinho em 10 s<div class="drain"><i></i></div></div>
-          <div class="c-foot"><span id="foot">GESTTA · 3×/DIA</span><span class="ex">exemplo</span></div>
+          <div class="c-foot"><span id="foot">GESTTA</span><span class="ex">exemplo</span></div>
         </div>
 
         <button class="cap" id="cap" type="button" aria-expanded="false" aria-controls="card" aria-label="Abrir minhas tarefas">
@@ -353,6 +354,7 @@
     document.getElementById('greetDate').textContent=DOW_LONG[today.getDay()]+', '+today.getDate()+' de '+MES[today.getMonth()];
     // cápsula e progresso
     document.getElementById('capOv').textContent=s.overdue;
+    document.getElementById('capOv').parentNode.classList.toggle('zero',!s.overdue);
     document.getElementById('capHoje').textContent=s.due_today;
     var pct=s.today_total?s.done_today/s.today_total:0;
     document.getElementById('ringFg').setAttribute('stroke-dashoffset',(47.1*(1-pct)).toFixed(1));
@@ -379,9 +381,12 @@
     var quando=dias===0?'das '+hhmm(last):dias===1?'de ontem':'de '+ddmm(last);
     document.getElementById('stampTxt').textContent=stale?'dados '+quando:'atualizado '+hhmm(last);
     document.getElementById('bannerTxt').innerHTML='<b>Dados '+quando+'.</b> Última sincronização '+ddmm(last)+', '+hhmm(last)+'.';
-    document.getElementById('foot').textContent=stale?'ÚLTIMO SYNC '+ddmm(last)+' '+hhmm(last):'GESTTA · 3×/DIA';
+    document.getElementById('foot').textContent=stale?'ÚLTIMO SYNC '+ddmm(last)+' '+hhmm(last):cadencia();
     applyMode();
   }
+  // Rodapé: na v1 é só 'GESTTA' (decisão do José Luiz, 08/10). cfg.sync_times já chega e fica guardado em cfg;
+  // 'próxima atualização às HH:MM' só entra quando ele confirmar os horários do robô no Hub — não pela presença do campo.
+  function cadencia(){return 'GESTTA';}
   function fail(err){
     // sem resposta do Hub: se já temos dado, ele vira "velho"; se não, avisa sem inventar números
     console.warn('gestor api',err&&err.code,err);
@@ -427,7 +432,7 @@
 
   /* ---------- cápsula / estados ---------- */
   // Estados: normal ("idle"), dado velho ("stale", decidido pelo servidor), bom-dia ("morning", uma vez por sessão).
-  // Dado velho tem prioridade: o cartão não cobra com informação defasada.
+  // Dado velho tem prioridade no estilo; se coincidir com o bom-dia, a saudação aparece junto da faixa.
   var screen=document.getElementById('screen'),hud=document.getElementById('hud'),capBtn=document.getElementById('cap');
   var pinned=false,hover=false,clicked=false,morning=false,forced=null,mt=null;
   var canHover=window.matchMedia&&window.matchMedia('(hover:hover) and (pointer:fine)').matches;
@@ -435,6 +440,7 @@
   function applyMode(){
     var m=forced||(stale?'stale':morning?'morning':'idle');
     screen.setAttribute('data-mode',m);
+    screen.toggleAttribute('data-bomdia',m==='stale'&&morning); // dado velho no bom-dia: saudação + faixa âmbar
     var bs=document.querySelectorAll('.seg button');for(var i=0;i<bs.length;i++)bs[i].setAttribute('aria-pressed',bs[i].getAttribute('data-mode')===m?'true':'false');
   }
   function goodMorning(){
