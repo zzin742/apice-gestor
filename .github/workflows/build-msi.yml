@@ -109,9 +109,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "segunda execução falhou ($LASTEXITCODE)" }
           if (-not (Select-String -Path $log -Pattern 'nada a fazer' -Quiet)) { throw 'segunda execução reinstalou: não é idempotente' }
 
+          # Simula o autostart que o app grava em HKCU\Run; o -Desinstalar tem que limpar.
+          $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          New-ItemProperty -Path $run -Name 'TesteApiceGestor' -Value "`"$exe`"" -Force | Out-Null
+
           & $s -Desinstalar
           if ($LASTEXITCODE -ne 0) { throw "desinstalar falhou ($LASTEXITCODE)" }
           if (Test-Path $exe) { throw 'exe continua lá depois de desinstalar' }
+          if ((Get-ItemProperty $run).PSObject.Properties['TesteApiceGestor']) { throw 'autostart ficou em HKCU\Run' }
 
           & $s -Desinstalar
           if ($LASTEXITCODE -ne 0) { throw "desinstalar 2x falhou ($LASTEXITCODE)" }

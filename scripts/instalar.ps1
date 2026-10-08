@@ -343,6 +343,20 @@ function RemoverTokenDoUsuario {
     else { Escrever 'Token removido. Para usar de novo, será preciso um código novo.' 'Green' }
 }
 
+# O autostart do app (tauri-plugin-autostart) grava um valor em HKCU\...\Run na conta do
+# colaborador; o msiexec /x não sabe dele. Procura pelo executável, não pelo nome do valor.
+function RemoverAutostartDoUsuario {
+    $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    $chave = Get-ItemProperty -Path $run -ErrorAction SilentlyContinue
+    if (-not $chave) { return }
+    foreach ($v in $chave.PSObject.Properties) {
+        if ($v.Name -notlike 'PS*' -and [string]$v.Value -like '*apice-gestor.exe*') {
+            Remove-ItemProperty -Path $run -Name $v.Name
+            Escrever "Autostart removido ($($v.Name))." 'Green'
+        }
+    }
+}
+
 function SessaoEhDesteUsuario {
     # Se este PowerShell está elevado como OUTRA conta (a da TI), o token iria para a conta errada.
     if (-not (EhAdmin)) { return $true }
@@ -366,8 +380,10 @@ if ($Etapa -eq 'Remocao') {
 }
 
 if ($Desinstalar) {
+    # Autostart e token são da conta da sessão: tratados aqui, antes da elevação.
+    if (-not (SessaoEhDesteUsuario)) { exit 2 }
+    RemoverAutostartDoUsuario
     if ($RemoverToken) {
-        if (-not (SessaoEhDesteUsuario)) { exit 2 }
         RemoverTokenDoUsuario
     } else {
         Escrever 'Token preservado (reinstalar não gasta outro código). Para apagar: -RemoverToken.'
