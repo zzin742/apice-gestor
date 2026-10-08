@@ -9,12 +9,16 @@ esperado: **pare, anote (seção 6) e não tente consertar**.
 ## O que você recebe
 
 - `apice-gestor_0.1.0_x64.msi` e `SHA256SUMS.txt`: artefato da **run manual do build-msi** que o
-  Vigia indicou: **run [37792703891](https://github.com/zzin742/apice-gestor/actions/runs/37792703891)**,
-  SHA-256 `3bbeafa2309aadb8654deef695d09db2cf5af7b465b89ffd303dbad86aecdc98`. **Não use .msi de outra run**: só a manual tem o
+  Vigia indicou: **run [37817278308](https://github.com/zzin742/apice-gestor/actions/runs/37817278308)**
+  (main `7fb75e7`, com o arraste), SHA-256 `2c859b5be267a530238602cca7aebf6004378207d0591c2a4200be1cb4db3b16`. **Não use .msi de outra run**: só a manual tem o
   endereço do mock embutido.
 - O **código de enrolamento** do mock: `K7QM-4XPA`. Vale **uma vez**, só para o mock do Mac do
   José Luiz; não serve no Hub de verdade.
 - O Mac do José Luiz ligado, na mesma rede, com o mock da Ponte rodando.
+
+> **Já instalou um .msi anterior neste PC?** Desinstale antes (seção 5), mas **não remova o
+> token** do Gerenciador de Credenciais. Depois instale o novo (passo 2) e **pule o passo 3**: a
+> máquina continua enrolada, e o código `K7QM-4XPA` já foi usado.
 
 ## 1. O PC enxerga o mock?
 
@@ -83,6 +87,20 @@ Abra o **Ápice Gestor** pelo menu Iniciar.
 - [ ] **Clicar numa tarefa abre ela no navegador** (Gestta).
 - [ ] O ícone aparece na bandeja.
 
+## 4b. Arrastar a cápsula — nesta ordem
+
+- [ ] **1. Clique curto abre:** um clique rápido na cápsula abre o cartão (não arrasta).
+- [ ] **2. Arrastar com o cartão fechado:** segure e arraste a cápsula recolhida para outro
+      ponto. Ela acompanha o mouse e fica onde você soltar.
+- [ ] **3. Arrastar logo depois do hover:** passe o mouse para o cartão abrir e, em seguida,
+      comece a arrastar. **Esperado:** o cartão recolhe e só então a cápsula é arrastada.
+- [ ] **4. Canto oposto:** solte a cápsula no **alto à esquerda** da tela e abra o cartão.
+      **Esperado:** o cartão abre **para baixo e para a direita**, inteiro na tela.
+- [ ] **5. Posição lembrada:** feche o app (menu da bandeja ou Gerenciador de Tarefas) e abra de
+      novo pelo menu Iniciar. **Esperado:** a cápsula volta onde você deixou.
+- [ ] **6. Voltar ao canto:** clique com o botão direito no ícone da bandeja → **Voltar ao canto**.
+      **Esperado:** a cápsula volta ao canto inferior direito, acima da barra.
+
 ## 5. Desfazer (se o José Luiz pedir)
 
 Configurações → Aplicativos → **Ápice Gestor** → Desinstalar. O token fica no Gerenciador de
@@ -93,14 +111,16 @@ Credenciais do Windows: **Credenciais do Windows → Credenciais genéricas →*
 
 Mande para o Vigia, com foto da tela quando ajudar:
 
-1. **Em qual passo** parou (1 a 4) e o horário.
+1. **Em qual passo** parou (1 a 4b) e o horário.
 2. **Passo 1:** o que o navegador mostrou.
 3. **Passo 2:** os dois SHA-256 e a mensagem do instalador (texto ou código de erro).
 4. **Passo 3:** o número da **saída** e o texto impresso. **Não** mande o código de enrolamento
    por WhatsApp/grupo.
 5. **Passo 4:** o **estado do painel**: a cápsula apareceu? onde? Está âmbar ("dados de ontem"),
    "sem conexão", "não configurado", vazia ou com tarefas? Foto da cápsula e do cartão aberto.
-6. Versão do Windows (`winver`) e se há outro antivírus além do Defender.
+6. **Passo 4b:** qual item (1 a 6) falhou, onde a cápsula estava na tela e o que aconteceu
+   (não mexeu, cartão não recolheu, abriu cortado, posição perdida...). Um vídeo do celular ajuda.
+7. Versão do Windows (`winver`) e se há outro antivírus além do Defender.
 
 ---
 
