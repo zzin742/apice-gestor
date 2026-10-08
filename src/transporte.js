@@ -15,7 +15,7 @@ function viaIpc() {
   return {
     getTasks: () => call('gestor_tarefas'),
     getConfig: () => call('gestor_config'),
-    heartbeat: (payload) => call('gestor_batimento', { payload }),
+    // o heartbeat (contrato §5) é da casca, no Rust; a interface só avisa eventos (painel_evento)
     enroll: (codigo) => call('gestor_enrolar', { codigo }),
   };
 }
@@ -68,4 +68,12 @@ export function aoMudarPosicao(fn) {
   if (tauri?.event?.listen) return tauri.event.listen('painel://posicao', (e) => fn(e.payload));
   globalThis.addEventListener('painel-posicao', (e) => fn(e.detail));
   return Promise.resolve(() => {});
+}
+
+// Sinais para o heartbeat da casca: 'aberto' (o usuário abriu o cartão) e 'bom_dia' (o bom-dia apareceu).
+// Sem retorno; falha silenciosa — telemetria nunca atrapalha a tela.
+export function avisarEvento(tipo) {
+  if (tauri?.core?.invoke) return tauri.core.invoke('painel_evento', { tipo }).catch(() => {});
+  (globalThis.__painelEventos = globalThis.__painelEventos || []).push(tipo);
+  return Promise.resolve();
 }
