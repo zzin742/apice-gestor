@@ -4,49 +4,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Painel do Dia</title>
 <meta name="description" content="Simulação da tela do colaborador com o checklist do dia como cápsula minimalista no canto.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<link rel="stylesheet" href="fontes.css">
+<link rel="stylesheet" href="painel.css">
 <style>
   /* Layout: a laptop screen (16:10) showing a maximized spreadsheet + Windows-style taskbar.
      The checklist is a glass capsule above the tray; it grows into a tabbed card only on hover/click. */
-  :root{
-    --bg:#e9edf2; --bg2:#f4f6f9;
-    --ink:#1b2330; --ink-2:#5a6577; --ink-3:#8b96a6; --line:#dfe4ea;
-    --accent:#0f7f89; --accent-soft:#d6eef0;
-    --ok:#1f9d57; --ok-soft:#dcf1e5; --warn:#b8760a; --warn-soft:#f6ead2; --crit:#d0433a; --crit-soft:#f9dedb;
-    --wall-a:#cfd9ea; --wall-b:#e7e0f1; --wall-c:#d4ebe8;
-    --win:#ffffff; --win-2:#f4f6f9; --win-3:#eceff3; --grid:#e3e8ee; --sel:#dff0f1;
-    --bar:rgba(246,248,251,.78); --bar-line:rgba(0,0,0,.08);
-    --glass:rgba(255,255,255,.76); --glass-line:rgba(255,255,255,.75); --glass-shadow:0 10px 30px -12px rgba(16,24,40,.35),0 2px 6px -2px rgba(16,24,40,.18);
-    --bezel:#11151c;
-    --ui:"Manrope",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-    --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
-  }
-  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-    --bg:#0b0e13; --bg2:#121722;
-    --ink:#e7ebf1; --ink-2:#a3adbc; --ink-3:#737e8e; --line:#28303b;
-    --accent:#45b9c4; --accent-soft:#113139;
-    --ok:#47c680; --ok-soft:#10301f; --warn:#e2a43c; --warn-soft:#352811; --crit:#f06c62; --crit-soft:#3a1816;
-    --wall-a:#1a2236; --wall-b:#241f3a; --wall-c:#15302e;
-    --win:#171b22; --win-2:#1e232c; --win-3:#242a34; --grid:#262d38; --sel:#163238;
-    --bar:rgba(22,26,33,.78); --bar-line:rgba(255,255,255,.08);
-    --glass:rgba(26,30,38,.74); --glass-line:rgba(255,255,255,.09); --glass-shadow:0 14px 34px -12px rgba(0,0,0,.7),0 2px 8px -2px rgba(0,0,0,.5);
-    color-scheme:dark;
-  }}
-  :root[data-theme="dark"]{
-    --bg:#0b0e13; --bg2:#121722;
-    --ink:#e7ebf1; --ink-2:#a3adbc; --ink-3:#737e8e; --line:#28303b;
-    --accent:#45b9c4; --accent-soft:#113139;
-    --ok:#47c680; --ok-soft:#10301f; --warn:#e2a43c; --warn-soft:#352811; --crit:#f06c62; --crit-soft:#3a1816;
-    --wall-a:#1a2236; --wall-b:#241f3a; --wall-c:#15302e;
-    --win:#171b22; --win-2:#1e232c; --win-3:#242a34; --grid:#262d38; --sel:#163238;
-    --bar:rgba(22,26,33,.78); --bar-line:rgba(255,255,255,.08);
-    --glass:rgba(26,30,38,.74); --glass-line:rgba(255,255,255,.09); --glass-shadow:0 14px 34px -12px rgba(0,0,0,.7),0 2px 8px -2px rgba(0,0,0,.5);
-    color-scheme:dark;
-  }
-
   *{box-sizing:border-box}
   body{background:linear-gradient(160deg,var(--bg),var(--bg2));color:var(--ink);font-family:var(--ui);min-height:100%}
   .wrap{max-width:1080px;margin:0 auto;padding-block:18px;padding-left:16px;padding-right:16px}
@@ -97,100 +59,6 @@
   .tray .dots{display:flex;gap:5px}.tray .dots i{width:6px;height:6px;border-radius:50%;background:var(--ink-3);opacity:.6}
   .clock{text-align:right;line-height:1.15}
 
-  /* capsule + card */
-  .hud{position:absolute;right:14px;top:14px;bottom:56px;z-index:5;display:flex;flex-direction:column;align-items:flex-end;justify-content:flex-end;pointer-events:none;font-family:var(--ui)}
-  .cap{pointer-events:auto;display:flex;align-items:center;gap:9px;height:34px;padding:0 12px 0 9px;border-radius:17px;
-    background:var(--glass);backdrop-filter:blur(16px) saturate(1.4);-webkit-backdrop-filter:blur(16px) saturate(1.4);
-    border:1px solid var(--glass-line);box-shadow:var(--glass-shadow);cursor:pointer;font:inherit;color:var(--ink);transition:transform .18s ease}
-  .cap:hover{transform:translateY(-1px)}
-  .cap:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  .ring{width:18px;height:18px;flex:none}
-  .ring circle{fill:none;stroke-width:2.6}
-  .ring .bg{stroke:color-mix(in srgb,var(--ink-3) 35%,transparent)}
-  .ring .fg{stroke:var(--ok);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%}
-  .cap .t{font-size:12.5px;font-weight:600;letter-spacing:-.005em;white-space:nowrap;display:flex;gap:6px;align-items:baseline}
-  .cap .t em{font-style:normal;color:var(--crit)}
-  .cap .t s{text-decoration:none;color:var(--ink-3);font-weight:500}
-  .cap .t b{font-weight:700;font-family:var(--mono);font-variant-numeric:tabular-nums}
-  .sync{width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none}
-
-  .card{position:absolute;right:0;bottom:44px;width:316px;max-width:calc(100vw - 60px);height:min(470px,calc(100% - 44px));
-    background:var(--glass);backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4);
-    border:1px solid var(--glass-line);border-radius:16px;box-shadow:var(--glass-shadow);
-    display:flex;flex-direction:column;overflow:hidden;
-    transform:translateY(8px) scale(.98);transform-origin:100% 100%;opacity:0;pointer-events:none;transition:transform .2s ease,opacity .16s ease}
-  .hud.open .card{transform:none;opacity:1;pointer-events:auto}
-  .card::after{content:"";position:absolute;left:0;right:0;top:100%;height:12px} /* fecha o vão até a cápsula pro mouse não "sair" no caminho */
-  @media (prefers-reduced-motion:reduce){.card,.cap{transition:none}}
-
-  .c-head{padding:13px 14px 8px;flex:none}
-  .greet{display:none;font-size:15px;font-weight:700;letter-spacing:-.01em;margin-bottom:9px}
-  .greet small{display:block;font-size:11.5px;color:var(--ink-3);font-weight:500;margin-top:2px}
-  .c-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-  .c-top b{font-size:13.5px;font-weight:700}
-  .c-top span{font:500 11px var(--mono);color:var(--ink-3)}
-  .prog{margin-top:9px}
-  .prog .lbl{display:flex;justify-content:space-between;font-size:11px;color:var(--ink-3);font-weight:600;margin-bottom:5px}
-  .prog .lbl b{color:var(--ink-2);font-family:var(--mono);font-weight:600}
-  .bar{height:4px;border-radius:2px;background:color-mix(in srgb,var(--ink-3) 25%,transparent);overflow:hidden}
-  .bar i{display:block;height:100%;width:33%;background:var(--ok);border-radius:2px}
-
-  .tabs{display:flex;gap:2px;margin-top:10px;background:color-mix(in srgb,var(--ink-3) 16%,transparent);border-radius:9px;padding:2px}
-  .tabs button{flex:1;font:inherit;font-size:11.5px;font-weight:700;color:var(--ink-3);background:transparent;border:0;padding:5px 4px;border-radius:7px;cursor:pointer;display:flex;justify-content:center;gap:5px;align-items:baseline}
-  .tabs button[aria-selected="true"]{background:var(--win);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
-  .tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-  .tabs .c{font:600 10px var(--mono);color:var(--ink-3)}
-
-  .banner{display:none;gap:8px;align-items:flex-start;padding:8px 13px;background:var(--warn-soft);color:var(--warn);font-size:11.5px;line-height:1.35;border-top:1px solid color-mix(in srgb,var(--warn) 30%,transparent);border-bottom:1px solid color-mix(in srgb,var(--warn) 30%,transparent);flex:none}
-  .banner svg{flex:none;margin-top:1px}
-
-  .body{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
-  .pane{display:none;overflow:auto;min-height:0;padding:2px 6px 6px;flex:1}
-  .pane.on{display:block}
-  .search{position:sticky;top:0;z-index:1;padding:6px 1px 6px;background:color-mix(in srgb,var(--win) 78%,transparent);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
-  .search label{position:relative;display:block}
-  .search input{width:100%;font:inherit;font-size:12px;font-weight:500;padding:7px 10px 7px 29px;border-radius:9px;border:1px solid color-mix(in srgb,var(--ink-3) 35%,transparent);background:color-mix(in srgb,var(--win) 80%,transparent);color:var(--ink)}
-  .search input:focus{outline:2px solid var(--accent);outline-offset:0;border-color:transparent}
-  .search svg{position:absolute;left:9px;top:8px;color:var(--ink-3);pointer-events:none}
-  .search .n{position:absolute;right:9px;top:8px;font:600 10.5px var(--mono);color:var(--ink-3)}
-  .g{padding:7px 7px 3px}
-  .g h2{margin:0 2px 5px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:700;display:flex;gap:6px;align-items:center}
-  .g.v h2{color:var(--crit)}
-  .g h2 .c{font:600 10.5px var(--mono);color:var(--ink-2)}
-  .task{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:center;padding:7px 6px;border-radius:8px;cursor:pointer}
-  .task:hover{background:color-mix(in srgb,var(--ink-3) 12%,transparent)}
-  .task:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-  .dot{width:10px;height:10px;border-radius:50%;flex:none;border:2px solid var(--warn);position:relative}
-  .task.ov .dot{border-color:var(--crit)}
-  .task.ok .dot{border-color:var(--ok);background:var(--ok)}
-  .task.ok .dot::after{content:"";position:absolute;left:2px;top:0;width:2.5px;height:5.5px;border:solid #fff;border-width:0 1.8px 1.8px 0;transform:rotate(42deg)}
-  .task.far .dot{border-color:color-mix(in srgb,var(--ink-3) 70%,transparent)}
-  .tm{min-width:0}
-  .tm b{display:block;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.005em}
-  .task.ok .tm b{color:var(--ink-3);font-weight:500}
-  .tm small{display:block;font-size:10.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
-  .tag{font:600 10px/1 var(--mono);color:var(--ink-3);white-space:nowrap;display:flex;align-items:center;gap:5px}
-  .task.ov .tag{color:var(--crit)} .task.ok .tag{color:var(--ok)}
-  .tag .go{opacity:0;transition:opacity .15s;color:var(--accent);font-size:12px}
-  .task:hover .tag .go{opacity:1}
-  .empty{padding:28px 10px;text-align:center;color:var(--ink-3);font-size:12px;font-weight:600}
-  .toast{position:absolute;left:50%;bottom:10px;transform:translateX(-50%) translateY(6px);background:var(--ink);color:var(--win);font-size:11.5px;font-weight:600;padding:7px 11px;border-radius:9px;opacity:0;pointer-events:none;transition:all .18s;white-space:nowrap;max-width:92%;overflow:hidden;text-overflow:ellipsis;z-index:3}
-  .toast.show{opacity:1;transform:translateX(-50%)}
-
-  .auto{display:none;padding:7px 14px;font-size:11px;color:var(--ink-3);font-weight:600;border-top:1px solid color-mix(in srgb,var(--ink-3) 20%,transparent);flex:none}
-  .auto .drain{height:2px;margin-top:6px;background:color-mix(in srgb,var(--ink-3) 25%,transparent);border-radius:1px;overflow:hidden}
-  .auto .drain i{display:block;height:100%;width:100%;background:var(--accent);transform-origin:left;animation:drain 10s linear forwards}
-  @keyframes drain{to{transform:scaleX(0)}}
-  @media (prefers-reduced-motion:reduce){.auto .drain i{animation:none;transform:scaleX(.4)}}
-  .c-foot{display:flex;justify-content:space-between;align-items:center;padding:7px 14px 9px;font:600 10px var(--mono);color:var(--ink-3);letter-spacing:.04em;border-top:1px solid color-mix(in srgb,var(--ink-3) 20%,transparent);flex:none}
-  .c-foot .ex{border:1px solid color-mix(in srgb,var(--ink-3) 35%,transparent);border-radius:4px;padding:1px 5px;text-transform:uppercase}
-
-  [data-mode="morning"] .greet,[data-mode="morning"] .auto{display:block}
-  [data-mode="stale"] .banner{display:flex}
-  [data-mode="stale"] .sync{background:var(--warn)}
-  [data-mode="stale"] .cap .t s{color:var(--warn)}
-  [data-mode="stale"] .pane{opacity:.55}
-
   .notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-top:14px}
   .note{background:var(--win);border:1px solid var(--line);border-radius:12px;padding:11px 13px;font-size:12.5px;color:var(--ink-2);line-height:1.5;font-weight:500}
   .note b{display:block;color:var(--ink);font-weight:700;margin-bottom:2px}
@@ -236,39 +104,22 @@
       <div class="hud" id="hud">
         <div class="card" role="region" aria-label="Minhas tarefas" id="card">
           <div class="c-head">
-            <div class="greet">Bom dia, Rafael<small>Quarta, 7 de outubro</small></div>
-            <div class="c-top"><b>Minhas tarefas</b><span id="stampTxt">atualizado 13:02</span></div>
-            <div class="prog"><div class="lbl"><span>Concluídas hoje</span><b>4 de 12</b></div><div class="bar"><i></i></div></div>
+            <div class="greet"><span id="greetName">Bom dia</span><small id="greetDate"></small></div>
+            <div class="c-top"><b>Minhas tarefas</b><span id="stampTxt">carregando…</span></div>
+            <div class="prog"><div class="lbl"><span>Concluídas hoje</span><b id="progTxt">–</b></div><div class="bar"><i id="progBar" style="width:0%"></i></div></div>
             <div class="tabs" role="tablist" aria-label="Período">
-              <button role="tab" aria-selected="true" data-tab="hoje" id="tab-hoje">Hoje <span class="c">8</span></button>
-              <button role="tab" aria-selected="false" data-tab="semana" id="tab-semana">Semana <span class="c" id="cSemana">0</span></button>
-              <button role="tab" aria-selected="false" data-tab="todas" id="tab-todas">Todas <span class="c" id="cTodas">0</span></button>
+              <button role="tab" aria-selected="true" data-tab="hoje" id="tab-hoje">Hoje <span class="c" id="cHoje">–</span></button>
+              <button role="tab" aria-selected="false" data-tab="semana" id="tab-semana">Semana <span class="c" id="cSemana">–</span></button>
+              <button role="tab" aria-selected="false" data-tab="todas" id="tab-todas">Todas <span class="c" id="cTodas">–</span></button>
             </div>
           </div>
           <div class="banner" role="status">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 9v4M12 17h.01M10.3 3.9 2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
-            <div><b>Dados de ontem.</b> Última sincronização 05/10, 14:44.</div>
+            <div id="bannerTxt"><b>Dados de ontem.</b></div>
           </div>
 
           <div class="body">
-            <div class="pane on" id="pane-hoje" role="tabpanel" aria-labelledby="tab-hoje">
-              <div class="g v"><h2>Vencidas <span class="c">3</span></h2>
-                <div class="task ov" tabindex="0"><span class="dot"></span><div class="tm"><b>Rescisão — contrato 00482</b><small>MM Mercado · comp. 09/2026</small></div><span class="tag">2d<span class="go">↗</span></span></div>
-                <div class="task ov" tabindex="0"><span class="dot"></span><div class="tm"><b>Aviso de férias — V. Santos</b><small>Padaria Trigo de Ouro</small></div><span class="tag">1d<span class="go">↗</span></span></div>
-                <div class="task ov" tabindex="0"><span class="dot"></span><div class="tm"><b>FGTS — guia competência 09</b><small>Auto Posto Sol</small></div><span class="tag">1d<span class="go">↗</span></span></div>
-              </div>
-              <div class="g"><h2>Hoje <span class="c">9</span></h2>
-                <div class="task" tabindex="0"><span class="dot"></span><div class="tm"><b>Admissão — novo empregado</b><small>Clínica Vida · entrada hoje</small></div><span class="tag">17h<span class="go">↗</span></span></div>
-                <div class="task" tabindex="0"><span class="dot"></span><div class="tm"><b>eSocial — evento S-2200</b><small>Transportes RT</small></div><span class="tag">17h<span class="go">↗</span></span></div>
-                <div class="task" tabindex="0"><span class="dot"></span><div class="tm"><b>DCTFWeb — competência 09</b><small>Construtora Álamo</small></div><span class="tag">18h<span class="go">↗</span></span></div>
-                <div class="task" tabindex="0"><span class="dot"></span><div class="tm"><b>GPS — guia competência 09</b><small>Farmácia Central</small></div><span class="tag">16h<span class="go">↗</span></span></div>
-                <div class="task" tabindex="0"><span class="dot"></span><div class="tm"><b>Folha mensal — fechamento</b><small>Hotel Mirante</small></div><span class="tag">18h<span class="go">↗</span></span></div>
-                <div class="task ok" tabindex="0"><span class="dot"></span><div class="tm"><b>Cálculo de férias — J. Lima</b><small>Mercado União</small></div><span class="tag">ok<span class="go">↗</span></span></div>
-                <div class="task ok" tabindex="0"><span class="dot"></span><div class="tm"><b>Afastamento — benefício INSS</b><small>Oficina do Km</small></div><span class="tag">ok<span class="go">↗</span></span></div>
-                <div class="task ok" tabindex="0"><span class="dot"></span><div class="tm"><b>Homologação de rescisão</b><small>Panificadora Sul</small></div><span class="tag">ok<span class="go">↗</span></span></div>
-                <div class="task ok" tabindex="0"><span class="dot"></span><div class="tm"><b>Envio de holerites</b><small>Clínica Vida</small></div><span class="tag">ok<span class="go">↗</span></span></div>
-              </div>
-            </div>
+            <div class="pane on" id="pane-hoje" role="tabpanel" aria-labelledby="tab-hoje"></div>
             <div class="pane" id="pane-semana" role="tabpanel" aria-labelledby="tab-semana"></div>
             <div class="pane" id="pane-todas" role="tabpanel" aria-labelledby="tab-todas">
               <div class="search"><label><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input type="search" id="q" placeholder="Buscar cliente ou tarefa" autocomplete="off"><span class="n" id="qn"></span></label></div>
@@ -278,12 +129,12 @@
           </div>
 
           <div class="auto">Recolhe sozinho em 10 s<div class="drain"><i></i></div></div>
-          <div class="c-foot"><span id="foot">GESTTA · 3×/DIA</span><span class="ex">exemplo</span></div>
+          <div class="c-foot"><span id="foot">GESTTA</span><span class="ex">exemplo</span></div>
         </div>
 
         <button class="cap" id="cap" type="button" aria-expanded="false" aria-controls="card" aria-label="Abrir minhas tarefas">
-          <svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/><circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="47.1" stroke-dashoffset="31.6"/></svg>
-          <span class="t"><em><b>3</b> vencidas</em><s>·</s><span><b>5</b> hoje</span></span>
+          <svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/><circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="47.1" stroke-dashoffset="47.1" id="ringFg"/></svg>
+          <span class="t"><em><b id="capOv">–</b> vencidas</em><s>·</s><span><b id="capHoje">–</b> hoje</span></span>
           <span class="sync" aria-hidden="true"></span>
         </button>
       </div>
@@ -324,86 +175,6 @@
     for(var i=0;i<rows.length;i++){var r=rows[i],neg=r[6].charAt(0)==='-';
       h+='<div class="r"><span>'+(i+1)+'</span><span>'+r[0]+'</span><span>'+r[1]+'</span><span class="num">'+r[2]+'</span><span class="num">'+r[3]+'</span><span class="num'+(i===3?' sel':'')+'">'+r[4]+'</span><span class="num">'+r[5]+'</span><span class="num'+(neg?' neg':'')+'">'+r[6]+'</span></div>';}
     document.getElementById('sheet').innerHTML=h;
-
-    /* ---------- task data (fictional, deterministic) ---------- */
-    var clients=rows.map(function(r){return r[0].replace(' Ltda','')});
-    var tpls=["Rescisão — contrato","Aviso de férias","Cálculo de férias","FGTS — guia","eSocial — evento S-1200","eSocial — evento S-2200","DCTFWeb","Admissão — novo empregado","Afastamento — INSS","Folha mensal — fechamento","Envio de holerites","Homologação de rescisão","GPS — guia","Pró-labore — cálculo"];
-    var DOW=['dom','seg','ter','qua','qui','sex','sáb'],BASE_DOW=3,BASE_DAY=7; // quarta, 7 de outubro
-    function dateOf(d){ // returns {label, dow, day, month}
-      var dow=(BASE_DOW+d)%7; if(dow===6){d+=2;} else if(dow===0){d+=1;} dow=(BASE_DOW+d)%7;
-      var day=BASE_DAY+d,month=10; if(day>31){day-=31;month=11;}
-      return {d:d,dow:dow,day:day,month:month};
-    }
-    var tasks=[
-      {n:"Rescisão — contrato 00482",c:"MM Mercado",d:-2},{n:"Aviso de férias — V. Santos",c:"Padaria Trigo de Ouro",d:-1},{n:"FGTS — guia competência 09",c:"Auto Posto Sol",d:-1},
-      {n:"Admissão — novo empregado",c:"Clínica Vida",d:0},{n:"eSocial — evento S-2200",c:"Transportes RT",d:0},{n:"DCTFWeb — competência 09",c:"Construtora Álamo",d:0},{n:"GPS — guia competência 09",c:"Farmácia Central",d:0},{n:"Folha mensal — fechamento",c:"Hotel Mirante",d:0}
-    ];
-    for(var k=0;k<138;k++){var dd=1+((k*7)%24);tasks.push({n:tpls[(k*3)%tpls.length]+(k%4===0?' — comp. 10/2026':''),c:clients[(k*5)%clients.length],d:dd});}
-    tasks.forEach(function(t){ if(t.d>0){var x=dateOf(t.d);t.d=x.d;t.dow=x.dow;t.day=x.day;t.month=x.month;} });
-    tasks.sort(function(a,b){return a.d-b.d});
-
-    function cap(s){return s.charAt(0).toUpperCase()+s.slice(1)}
-    function tagOf(t){
-      if(t.d<0)return (-t.d)+'d';
-      if(t.d===0)return 'hoje';
-      if(t.d<=7)return DOW[t.dow]+' '+t.day;
-      return (t.day<10?'0':'')+t.day+'/'+(t.month<10?'0':'')+t.month;
-    }
-    function rowHtml(t){
-      var cls='task'+(t.d<0?' ov':(t.d>7?' far':''));
-      return '<div class="'+cls+'" tabindex="0" data-n="'+t.n.toLowerCase()+' '+t.c.toLowerCase()+'"><span class="dot"></span><div class="tm"><b>'+t.n+'</b><small>'+t.c+'</small></div><span class="tag">'+tagOf(t)+'<span class="go">↗</span></span></div>';
-    }
-    // Semana: next 7 days grouped by day
-    var week=tasks.filter(function(t){return t.d>=1&&t.d<=7}),groups={},order=[];
-    week.forEach(function(t){var key=cap(DOW[t.dow])+' '+t.day;if(!groups[key]){groups[key]=[];order.push(key);}groups[key].push(t);});
-    var wh='';order.forEach(function(key){wh+='<div class="g"><h2>'+key+' <span class="c">'+groups[key].length+'</span></h2>'+groups[key].map(rowHtml).join('')+'</div>';});
-    document.getElementById('pane-semana').innerHTML=wh||'<div class="empty">Nada agendado pra semana.</div>';
-    document.getElementById('cSemana').textContent=week.length;
-    // Todas
-    var all=tasks;
-    document.getElementById('todasList').innerHTML=all.map(rowHtml).join('')+'<div class="empty" id="noRes" hidden>Nada com esse nome.</div>';
-    document.getElementById('cTodas').textContent=all.length;
-    var qn=document.getElementById('qn');qn.textContent=all.length+' abertas';
-    document.getElementById('q').addEventListener('input',function(){
-      var v=this.value.trim().toLowerCase(),n=0,rowsEl=document.querySelectorAll('#todasList .task');
-      for(var i=0;i<rowsEl.length;i++){var ok=!v||rowsEl[i].getAttribute('data-n').indexOf(v)>=0;rowsEl[i].hidden=!ok;if(ok)n++;}
-      document.getElementById('noRes').hidden=n>0;qn.textContent=v?(n+' de '+all.length):(all.length+' abertas');
-    });
-
-    /* ---------- tabs ---------- */
-    var tabs=document.querySelectorAll('.tabs [role=tab]');
-    function showTab(id){
-      for(var i=0;i<tabs.length;i++){var on=tabs[i].getAttribute('data-tab')===id;tabs[i].setAttribute('aria-selected',on?'true':'false');}
-      var panes=document.querySelectorAll('.pane');for(var j=0;j<panes.length;j++)panes[j].classList.toggle('on',panes[j].id==='pane-'+id);
-    }
-    document.querySelector('.tabs').addEventListener('click',function(e){var b=e.target.closest('[role=tab]');if(b)showTab(b.getAttribute('data-tab'));});
-
-    /* ---------- "open in Gestta" ---------- */
-    var toast=document.getElementById('toast'),tt=null;
-    function openTask(el){
-      var name=el.querySelector('.tm b').textContent;
-      toast.textContent='Abrindo no Gestta ↗  '+name;toast.classList.add('show');
-      clearTimeout(tt);tt=setTimeout(function(){toast.classList.remove('show')},1600);
-    }
-    document.getElementById('card').addEventListener('click',function(e){var t=e.target.closest('.task');if(t)openTask(t);});
-    document.getElementById('card').addEventListener('keydown',function(e){if(e.key==='Enter'){var t=e.target.closest('.task');if(t)openTask(t);}});
-
-    /* ---------- capsule / modes ---------- */
-    var screen=document.getElementById('screen'),hud=document.getElementById('hud'),capBtn=document.getElementById('cap');
-    var pinned=false,hover=false,clicked=false,canHover=window.matchMedia&&window.matchMedia('(hover:hover) and (pointer:fine)').matches;
-    function render(){var o=pinned||hover||clicked;hud.classList.toggle('open',o);capBtn.setAttribute('aria-expanded',o?'true':'false');}
-    function setMode(m){
-      screen.setAttribute('data-mode',m);pinned=(m==='morning');clicked=false;hover=false;showTab('hoje');
-      document.getElementById('stampTxt').textContent=(m==='stale')?'dados de ontem':'atualizado 13:02';
-      document.getElementById('foot').textContent=(m==='stale')?'ÚLTIMO SYNC 05/10 14:44':'GESTTA · 3×/DIA';
-      var bs=document.querySelectorAll('.seg button');for(var i=0;i<bs.length;i++)bs[i].setAttribute('aria-pressed',bs[i].getAttribute('data-mode')===m?'true':'false');
-      if(m==='morning'){var d=document.querySelector('.auto .drain i');if(d){d.style.animation='none';void d.offsetWidth;d.style.animation='';}}
-      render();
-    }
-    document.querySelector('.seg').addEventListener('click',function(e){var b=e.target.closest('button');if(b)setMode(b.getAttribute('data-mode'));});
-    capBtn.addEventListener('click',function(){if(pinned){pinned=false;}else{clicked=!clicked;}render();});
-    if(canHover){hud.addEventListener('mouseenter',function(){hover=true;render();});hud.addEventListener('mouseleave',function(){hover=false;render();});}
-    document.addEventListener('keydown',function(e){if(e.key==='Escape'){clicked=false;pinned=false;render();}});
-    render();
   })();
 </script>
+<script type="module" src="painel.js"></script>
