@@ -1,17 +1,35 @@
 mod api;
 mod enrolar;
+mod janela;
 
-use tauri::{Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
+use tauri::{Manager, State, WebviewWindow, WindowEvent};
 
-/// Tamanho do painel antes da interface medir a cápsula, em px lógicos.
-const TAMANHO_INICIAL: (f64, f64) = (240.0, 82.0);
-
-/// Redimensiona o painel mantendo o canto inferior direito encostado na área útil
-/// do monitor principal (acima da barra de tarefas, onde ela estiver).
-/// `largura` e `altura` em px CSS (lógicos); a folga da sombra vem incluída.
+/// Muda o tamanho do painel mantendo parado o canto `ancora` da janela
+/// (`inferior-direito`, padrão; `inferior-esquerdo`, `superior-direito`, `superior-esquerdo`).
+/// `largura` e `altura` em px CSS (lógicos), com a folga da sombra.
 #[tauri::command]
-fn painel_tamanho(window: WebviewWindow, largura: f64, altura: f64) -> Result<(), String> {
-    ancorar(&window, largura, altura).map_err(|e| e.to_string())
+fn painel_tamanho(
+    window: WebviewWindow,
+    largura: f64,
+    altura: f64,
+    ancora: Option<String>,
+) -> Result<(), String> {
+    let ancora = ancora.as_deref().unwrap_or("inferior-direito");
+    janela::redimensionar(&window, largura, altura, ancora).map_err(|e| e.to_string())
+}
+
+/// Começa o arraste nativo; a interface chama com o botão do mouse ainda pressionado.
+#[tauri::command]
+fn painel_arrastar(window: WebviewWindow) -> Result<(), String> {
+    window.start_dragging().map_err(|e| e.to_string())
+}
+
+/// Janela relativa à área útil do monitor onde está, em px lógicos.
+#[tauri::command]
+fn painel_posicao(window: WebviewWindow) -> Result<janela::Posicao, String> {
+    janela::posicao(&window).map_err(|e| e.to_string())
 }
 
 /// `GET me/tasks`: o cartão inteiro, já resolvido pelo Hub (contrato §3).
@@ -26,44 +44,25 @@ async fn gestor_config(api: State<'_, api::Api>) -> Result<serde_json::Value, ap
     api.get("me/config").await
 }
 
-fn ancorar(window: &WebviewWindow, largura: f64, altura: f64) -> tauri::Result<()> {
-    let Some(monitor) = window.primary_monitor()? else {
-        return window.set_size(tauri::LogicalSize::new(largura, altura));
-    };
-    let escala = monitor.scale_factor();
-    let area = monitor.work_area();
-    let w = (largura * escala).round() as i32;
-    let h = (altura * escala).round() as i32;
-    let x = area.position.x + area.size.width as i32 - w;
-    let y = area.position.y + area.size.height as i32 - h;
-    mover(window, x, y, w, h)
-}
-
-/// No Windows, posição e tamanho numa chamada só: sem o quadro em que a cápsula "pula".
-#[cfg(windows)]
-fn mover(window: &WebviewWindow, x: i32, y: i32, w: i32, h: i32) -> tauri::Result<()> {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER,
-    };
-    let hwnd = window.hwnd()?;
-    unsafe {
-        SetWindowPos(
-            hwnd.0 as _,
-            std::ptr::null_mut(),
-            x,
-            y,
-            w,
-            h,
-            SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE,
-        );
+/// Ícone na bandeja com "Voltar ao canto". O texto do menu passa pelo José Luiz antes da bancada.
+fn bandeja(app: &tauri::App) -> tauri::Result<()> {
+    let voltar = MenuItem::with_id(app, "voltar-ao-canto", "Voltar ao canto", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&voltar])?;
+    let mut icone = TrayIconBuilder::with_id("bandeja")
+        .tooltip("Ápice Gestor")
+        .menu(&menu)
+        .on_menu_event(|app, evento| {
+            if evento.id() == "voltar-ao-canto" {
+                if let Some(painel) = app.get_webview_window("main") {
+                    let _ = janela::voltar_ao_canto(&painel);
+                }
+            }
+        });
+    if let Some(imagem) = app.default_window_icon() {
+        icone = icone.icon(imagem.clone());
     }
+    icone.build(app)?;
     Ok(())
-}
-
-#[cfg(not(windows))]
-fn mover(window: &WebviewWindow, x: i32, y: i32, w: i32, h: i32) -> tauri::Result<()> {
-    window.set_size(PhysicalSize::new(w as u32, h as u32))?;
-    window.set_position(PhysicalPosition::new(x, y))
 }
 
 /// `--enrolar <código>`: devolve o código de saída do processo.
@@ -92,12 +91,27 @@ pub fn run() {
         // Abre a tarefa no navegador padrão; o escopo fica em capabilities/default.json.
         .plugin(tauri_plugin_opener::init())
         .manage(api::Api::new())
-        .invoke_handler(tauri::generate_handler![painel_tamanho, gestor_tarefas, gestor_config])
+        .manage(janela::Movimento::default())
+        .invoke_handler(tauri::generate_handler![
+            painel_tamanho,
+            painel_arrastar,
+            painel_posicao,
+            gestor_tarefas,
+            gestor_config
+        ])
         .setup(|app| {
             // A janela nasce escondida; só aparece já no canto, sem piscar no meio da tela.
             let painel = app.get_webview_window("main").expect("janela main");
-            ancorar(&painel, TAMANHO_INICIAL.0, TAMANHO_INICIAL.1)?;
+            janela::posicionar_ao_abrir(&painel)?;
             painel.show()?;
+            let movida = painel.clone();
+            painel.on_window_event(move |evento| {
+                if let WindowEvent::Moved(_) = evento {
+                    janela::ao_mover(&movida);
+                }
+            });
+            janela::vigiar_monitores(painel);
+            bandeja(app)?;
             Ok(())
         })
         .run(tauri::generate_context!())
