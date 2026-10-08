@@ -1,0 +1,66 @@
+# Gera o .msi do Ápice Gestor em windows-latest (Tauri não cruza-compila do macOS).
+#
+# O que este workflow FAZ: compila e guarda o .msi como artefato do run (aba Actions → run → Artifacts).
+# O que ele NÃO faz, de propósito:
+#   - não assina (pendente: decisão de certificado do José Luiz);
+#   - não cria GitHub Release nem publica manifesto do updater — publicar para máquina de
+#     colaborador é ato do José Luiz ("manda bala"), nunca automático.
+name: build-msi
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-msi-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  msi:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Dependências da CLI do Tauri
+        run: npm ci
+
+      - name: Build do .msi
+        run: npx tauri build --bundles msi
+
+      - name: SHA-256 do instalador
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem src-tauri/target/release/bundle/msi/*.msi
+          if (-not $msi) { throw "Nenhum .msi gerado em src-tauri/target/release/bundle/msi" }
+          $msi | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$h  $($_.Name)" | Out-File -Encoding utf8 -Append src-tauri/target/release/bundle/msi/SHA256SUMS.txt
+            "### $($_.Name)`n`nSHA-256 ``$h```n`nSem assinatura — só para Parallels/bancada." >> $env:GITHUB_STEP_SUMMARY
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apice-gestor-msi-${{ github.sha }}
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
