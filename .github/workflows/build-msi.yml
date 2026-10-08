@@ -13,12 +13,18 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      api_base:
+        description: "Endereço da API do Hub embutido no .msi (ex.: https://<hub>/api/gestor). Vazio = sem endereço."
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-msi-${{ github.ref }}
+  # Por evento: um push no main não cancela uma run manual (a da bancada) no meio.
+  group: build-msi-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -43,21 +49,26 @@ jobs:
         run: npm ci
 
       # O release lê GESTOR_API_BASE em tempo de compilação (src-tauri/src/api.rs, option_env!).
-      # Vem da variável do repo (Settings → Variables), não de segredo: é um endereço, não credencial.
-      # Só exporta se tiver valor — string vazia viraria Some("") e o app chamaria URL quebrada em vez
-      # de responder "endereço não configurado".
+      # Decisão do José Luiz (08/10): o endereço só entra por INPUT MANUAL (workflow_dispatch), nunca
+      # por variável fixa do repo, para nenhum build por push sair apontando para um lugar errado
+      # por esquecimento. Build por push = sem endereço (o app responde "endereço não configurado").
+      # Só exporta se tiver valor: string vazia viraria Some("") e o app chamaria URL quebrada.
+      # http é aceito porque o mock da Ponte na rede local é http.
       - name: Build do .msi
         shell: pwsh
         env:
-          API_BASE: ${{ vars.GESTOR_API_BASE }}
+          API_BASE: ${{ github.event_name == 'workflow_dispatch' && inputs.api_base || '' }}
         run: |
-          if ($env:API_BASE) {
-            if ($env:API_BASE -notmatch '^https://') { throw "GESTOR_API_BASE precisa começar com https://" }
-            $env:GESTOR_API_BASE = $env:API_BASE
-            "API do Hub: ``$env:API_BASE``" >> $env:GITHUB_STEP_SUMMARY
+          $api = "$env:API_BASE".Trim()
+          if ($api) {
+            if ($api -notmatch '^https?://\S+$') { throw "api_base inválido: precisa ser http(s)://... sem espaços" }
+            $env:GESTOR_API_BASE = $api
+            "::notice::.msi com API do Hub: $api"
+            "API do Hub embutida: ``$api``" >> $env:GITHUB_STEP_SUMMARY
+            if ($api -like 'http://*') { "⚠️ http sem TLS — só para teste na rede local." >> $env:GITHUB_STEP_SUMMARY }
           } else {
-            "::warning::GESTOR_API_BASE não definida — este .msi abre, mas responde 'endereço não configurado'. Não serve para a bancada."
-            "⚠️ **GESTOR_API_BASE não definida** — .msi sem endereço do Hub, não serve para a bancada." >> $env:GITHUB_STEP_SUMMARY
+            "::warning::Sem GESTOR_API_BASE — este .msi abre, mas responde 'endereço não configurado'. Não serve para a bancada."
+            "⚠️ **Sem endereço do Hub** — .msi não serve para a bancada." >> $env:GITHUB_STEP_SUMMARY
           }
           npx tauri build --bundles msi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -81,7 +92,7 @@ jobs:
 
       - uses: actions/upload-artifact@v6
         with:
-          name: apice-gestor-msi-${{ github.sha }}
+          name: apice-gestor-msi-${{ github.sha }}-${{ github.event_name == 'workflow_dispatch' && inputs.api_base != '' && 'com-api' || 'sem-api' }}
           path: |
             instalador/*.msi
             instalador/SHA256SUMS.txt
