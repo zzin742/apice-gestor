@@ -75,15 +75,35 @@ function render(d){
 // Rodapé: na v1 é só 'GESTTA' (decisão do José Luiz, 08/10). cfg.sync_times já chega e fica guardado em cfg;
 // 'próxima atualização às HH:MM' só entra quando ele confirmar os horários do robô no Hub — não pela presença do campo.
 function cadencia(){return 'GESTTA';}
+// Erros que significam "esta máquina precisa de código novo": não adianta tentar de novo.
+// not_enrolled = sem token no keychain (casca); unauthorized / token_revoked = 401 do Hub (contrato §1.4).
+var NAO_CONECTADO={not_enrolled:1,unauthorized:1,token_revoked:1};
+function semDado(){
+  // máquina não conectada: nada de número, nem os que já estavam na tela
+  data=null;all=[];byId={};
+  ['capOv','capHoje','cHoje','cSemana','cTodas','progTxt'].forEach(function(id){document.getElementById(id).textContent='–';});
+  document.getElementById('ringFg').setAttribute('stroke-dashoffset','47.1');
+  document.getElementById('progBar').style.width='0%';
+  ['pane-hoje','pane-semana','todasList'].forEach(function(id){document.getElementById(id).innerHTML='';});
+  qn.textContent='';
+}
 function fail(err){
-  // sem resposta do Hub: se já temos dado, ele vira "velho"; se não, avisa sem inventar números
-  console.warn('gestor api',err&&err.code,err);
+  var code=err&&err.code;
+  console.warn('gestor api',code,err);
   stale=true;
-  if(!data){
+  if(NAO_CONECTADO[code]){
+    semDado();
+    document.getElementById('stampTxt').textContent='não conectado';
+    document.getElementById('bannerTxt').innerHTML='<b>Este computador ainda não foi conectado ao Ápice Hub.</b> Peça o código ao administrador.';
+    document.getElementById('foot').textContent='NÃO CONECTADO';
+  }else if(!data){
+    // sem resposta do Hub: se já temos dado, ele vira "velho"; se não, avisa sem inventar números
     document.getElementById('stampTxt').textContent='sem conexão';
     document.getElementById('bannerTxt').innerHTML='<b>Sem conexão com o Hub.</b> Tentando de novo.';
     document.getElementById('foot').textContent='SEM SYNC';
   }
+  // sem dado não é alarme (José Luiz, 08/10): o traço da cápsula fica cinza, como o zero
+  if(!data)document.getElementById('capOv').parentNode.classList.add('zero');
   applyMode();
 }
 function load(){return api.getTasks().then(render,fail);}
