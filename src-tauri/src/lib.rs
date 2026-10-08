@@ -1,4 +1,6 @@
-use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+mod api;
+
+use tauri::{Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 
 /// Tamanho do painel antes da interface medir a cápsula, em px lógicos.
 const TAMANHO_INICIAL: (f64, f64) = (240.0, 82.0);
@@ -9,6 +11,18 @@ const TAMANHO_INICIAL: (f64, f64) = (240.0, 82.0);
 #[tauri::command]
 fn painel_tamanho(window: WebviewWindow, largura: f64, altura: f64) -> Result<(), String> {
     ancorar(&window, largura, altura).map_err(|e| e.to_string())
+}
+
+/// `GET me/tasks`: o cartão inteiro, já resolvido pelo Hub (contrato §3).
+#[tauri::command]
+async fn gestor_tarefas(api: State<'_, api::Api>) -> Result<serde_json::Value, api::ErroApi> {
+    api.get("me/tasks").await
+}
+
+/// `GET me/config`: flags e parâmetros que o agente obedece (contrato §4).
+#[tauri::command]
+async fn gestor_config(api: State<'_, api::Api>) -> Result<serde_json::Value, api::ErroApi> {
+    api.get("me/config").await
 }
 
 fn ancorar(window: &WebviewWindow, largura: f64, altura: f64) -> tauri::Result<()> {
@@ -56,7 +70,8 @@ pub fn run() {
     tauri::Builder::default()
         // Abre a tarefa no navegador padrão; o escopo fica em capabilities/default.json.
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![painel_tamanho])
+        .manage(api::Api::new())
+        .invoke_handler(tauri::generate_handler![painel_tamanho, gestor_tarefas, gestor_config])
         .setup(|app| {
             // A janela nasce escondida; só aparece já no canto, sem piscar no meio da tela.
             let painel = app.get_webview_window("main").expect("janela main");
