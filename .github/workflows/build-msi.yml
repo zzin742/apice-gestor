@@ -58,7 +58,8 @@ jobs:
           New-Item -ItemType Directory -Force instalador | Out-Null
           Copy-Item $msi[0].FullName "instalador/$nome"
           $h = (Get-FileHash "instalador/$nome" -Algorithm SHA256).Hash.ToLower()
-          "$h  $nome" | Out-File -Encoding utf8NoBOM instalador/SHA256SUMS.txt
+          # LF explícito: com CRLF, o `sha256sum -c` do Mac/Linux não acha o arquivo.
+          [IO.File]::WriteAllText("$PWD/instalador/SHA256SUMS.txt", "$h  $nome`n")
           "### $nome`n`nSHA-256 ``$h```n`nGerado de ``$($msi[0].Name)``. Sem assinatura — só para Parallels/bancada." >> $env:GITHUB_STEP_SUMMARY
 
       - uses: actions/upload-artifact@v6
