@@ -9,14 +9,6 @@ edition = "2021"
 name = "apice_gestor_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-[[bin]]
-name = "apice-gestor"
-path = "src/main.rs"
-
-[[bin]]
-name = "apice-gestor-servico"
-path = "src/servico_main.rs"
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -38,3 +30,6 @@ windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "W
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+
+[workspace]
+members = ["servico"]
