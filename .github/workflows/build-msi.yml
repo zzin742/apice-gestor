@@ -93,8 +93,19 @@ jobs:
             "::warning::Sem GESTOR_API_BASE — este .msi abre, mas responde 'endereço não configurado'. Não serve para a bancada."
             "⚠️ **Sem endereço do Hub** — .msi não serve para a bancada." >> $env:GITHUB_STEP_SUMMARY
           }
-          npx tauri build --bundles msi
+          # O serviço é crate separado do workspace (src-tauri/servico): o `tauri build` não o compila, e o
+          # src-tauri/wix/servico.wxs o empacota. Mesmo passo e mesmo GESTOR_API_BASE: ele também fala com a API.
+          cargo build --release --manifest-path src-tauri/Cargo.toml -p apice-gestor-servico
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx tauri build --bundles msi
+          if ($LASTEXITCODE -ne 0) {
+            # O tauri-bundler esconde a saída do candle/light; com -v ela aparece. A compilação já está
+            # pronta, então só o empacotamento roda de novo.
+            "::group::Falhou: empacotamento de novo com -v (saída do WiX)"
+            npx tauri build --bundles msi -v
+            "::endgroup::"
+            exit 1
+          }
 
       # O tauri-bundler nomeia o .msi como "{productName}_{versão}_{arch}_{idioma}.msi", com acento
       # e espaço ("Ápice Gestor_..."), e não oferece opção de config. Aqui ele vira um nome ASCII
@@ -116,7 +127,7 @@ jobs:
       # Roda o scripts/instalar.ps1 de verdade com o .msi recém-gerado (o runner é administrador):
       # instala, repete (tem que ser "nada a fazer"), desinstala e confere que limpou. O enrolamento
       # fica de fora: precisa do Hub e de alguém digitando o código.
-      - name: Teste do instalar.ps1 (instala, repete, desinstala)
+      - name: Teste do instalar.ps1 (instala com serviço, repete, recuperação, desinstala)
         shell: powershell
         run: |
           $s   = (Resolve-Path scripts/instalar.ps1).Path
@@ -126,42 +137,60 @@ jobs:
 
           $nome = [char]0x00C1 + 'pice Gestor'
           $run  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-          $apr  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
           function NoRun { (Get-Item $run).GetValue($nome) }
 
-          # 1. Instala: exe no lugar e início automático registrado no HKCU do usuário.
+          function Svc { Get-CimInstance Win32_Service -Filter "Name='ApiceGestor'" }
+
+          # 1. Instala com um Run legado no HKCU (versão antiga): o .msi cria o serviço, o script confere
+          #    e tira o Run (quem abre a cápsula agora é o serviço).
+          New-ItemProperty -Path $run -Name $nome -Value "`"$exe`" --sessao" -Force | Out-Null
           & $s -Msi $msi -SemEnrolar
           if ($LASTEXITCODE -ne 0) { throw "instalar falhou ($LASTEXITCODE)" }
           if (-not (Test-Path $exe)) { throw "exe não instalado em $exe" }
-          if ((NoRun) -ne "`"$exe`" --sessao") { throw "Run errado: '$(NoRun)'" }
+          # O .msi traz o serviço? (tabela ServiceInstall; hoje não, até o serviço virar crate próprio)
+          $wi = New-Object -ComObject WindowsInstaller.Installer
+          $db = $wi.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $wi, @($msi, 0))
+          try {
+            $vw = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @("SELECT Name FROM ServiceInstall"))
+            $vw.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $vw, $null) | Out-Null
+            $temServico = $null -ne $vw.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $vw, $null)
+          } catch { $temServico = $false }
+          ".msi com serviço: $temServico"
 
-          # 2. Repete: nada a fazer, nem no .msi nem no Run.
+          if ($temServico) {
+            $v = Svc
+            if (-not $v) { throw 'serviço ApiceGestor não foi criado pelo .msi' }
+            "serviço: $($v.State) / $($v.StartMode) / $($v.StartName) / $($v.PathName)"
+            if ($v.State -ne 'Running' -or $v.StartMode -ne 'Auto' -or $v.StartName -ne 'LocalSystem') { throw 'serviço fora do esperado' }
+            if ($v.PathName -notlike '*apice-gestor-servico.exe*') { throw "binário do serviço errado: $($v.PathName)" }
+            if ($null -ne (NoRun)) { throw 'Run legado ficou com o serviço instalado' }
+          } else {
+            if (Svc) { throw 'serviço criado por um .msi que não o declara' }
+            if ((NoRun) -ne "`"$exe`" --sessao") { throw "sem serviço, o Run tinha que ficar: '$(NoRun)'" }
+          }
+
+          # 2. Repete: nada a fazer, e o Run continua fora.
           & $s -Msi $msi -SemEnrolar
           if ($LASTEXITCODE -ne 0) { throw "segunda execução falhou ($LASTEXITCODE)" }
           if (-not (Select-String -Path $log -Pattern 'nada a fazer' -Quiet)) { throw 'segunda execução reinstalou: não é idempotente' }
-          if (-not (Select-String -Path $log -Pattern 'registrado\.\s*$' -Quiet)) { throw 'Run regravado na segunda execução' }
+          if ($temServico -and $null -ne (NoRun)) { throw 'Run regravado com o serviço instalado' }
 
-          # 3. A pessoa desativou no Gerenciador de Tarefas (StartupApproved com data nos 8 últimos
-          #    bytes) e o valor do Run sumiu: reinstalar NÃO religa.
-          Remove-ItemProperty -Path $run -Name $nome
-          if (-not (Test-Path $apr)) { New-Item -Path $apr -Force | Out-Null }
-          [byte[]]$desativado = 3,0,0,0, 0x10,0x20,0x30,0x40,0x50,0x60,0xD9,0x01
-          New-ItemProperty -Path $apr -Name $nome -PropertyType Binary -Value $desativado -Force | Out-Null
-          & $s -Msi $msi -SemEnrolar
-          if ($LASTEXITCODE -ne 0) { throw "reinstalar com desativado falhou ($LASTEXITCODE)" }
-          if ($null -ne (NoRun)) { throw 'religou o início automático que a pessoa desativou' }
-          Remove-ItemProperty -Path $apr -Name $nome
+          # 3. Recuperação: matar o processo do serviço → o Windows sobe de novo (reinicia em 60 s).
+          if ($temServico) {
+          $pid1 = (Svc).ProcessId
+          Stop-Process -Id $pid1 -Force
+          $ok = $false
+          foreach ($i in 1..24) { Start-Sleep 5; $v = Svc; if ($v.State -eq 'Running' -and $v.ProcessId -ne $pid1) { $ok = $true; break } }
+          if (-not $ok) { throw "o serviço não voltou em 120 s depois de morto (estado: $((Svc).State))" }
+          "serviço voltou sozinho: pid $pid1 → $((Svc).ProcessId)"
+          }
 
-          # 4. Desinstala: some o exe e o Run; a marca de desativado (se houver) fica.
-          & $s -Msi $msi -SemEnrolar
-          if ($null -eq (NoRun)) { throw 'não registrou de novo depois de reativado' }
-          New-ItemProperty -Path $apr -Name $nome -PropertyType Binary -Value $desativado -Force | Out-Null
+          # 4. Desinstala: some o serviço, o exe e o Run.
           & $s -Desinstalar
           if ($LASTEXITCODE -ne 0) { throw "desinstalar falhou ($LASTEXITCODE)" }
           if (Test-Path $exe) { throw 'exe continua lá depois de desinstalar' }
+          if (Svc) { throw 'serviço continua lá depois de desinstalar' }
           if ($null -ne (NoRun)) { throw 'início automático ficou em HKCU\Run' }
-          if ($null -eq (Get-Item $apr).GetValue($nome)) { throw 'apagou a marca de desativado do Gerenciador de Tarefas' }
-          Remove-ItemProperty -Path $apr -Name $nome
 
           # 5. Serviço órfão (MSI antigo ou falha no meio): o -Desinstalar tem que apagá-lo, mesmo sem
           #    app instalado. O binário é qualquer um: o serviço nem chega a iniciar.
