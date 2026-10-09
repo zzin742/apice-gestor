@@ -1,5 +1,6 @@
 mod api;
 mod batimento;
+mod cofre;
 mod comandos;
 mod desligar;
 mod enrolar;
