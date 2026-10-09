@@ -32,6 +32,29 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
+      # Antes de qualquer build: o Hub responde 307 de apicehub.com.br para www.apicehub.com.br, e o
+      # reqwest descarta o Authorization quando o redirect troca de host. O enroll passaria e todo o
+      # resto viraria 401, com o agente caindo no enrolamento em laço (recado do Farol, 08/10).
+      - name: Confere api_base
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          API_BASE: ${{ inputs.api_base }}
+        run: |
+          $api = "$env:API_BASE".Trim()
+          if (-not $api) { exit 0 }
+          $uri = $null
+          if (-not [Uri]::TryCreate($api, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin 'http', 'https') {
+            "::error title=api_base inválido::'$api' não é um endereço http(s) completo."
+            exit 1
+          }
+          if ($uri.Host -ieq 'apicehub.com.br') {
+            $certo = $api -replace '(?i)://apicehub\.com\.br', '://www.apicehub.com.br'
+            "::error title=api_base sem www::'$api' está sem o www. O Hub redireciona (307) para o www e o agente perde o token no caminho: tudo vira 401. Use $certo"
+            exit 1
+          }
+          "api_base ok: $api"
+
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
@@ -90,6 +113,65 @@ jobs:
           [IO.File]::WriteAllText("$PWD/instalador/SHA256SUMS.txt", "$h  $nome`n")
           "### $nome`n`nSHA-256 ``$h```n`nGerado de ``$($msi[0].Name)``. Sem assinatura — só para Parallels/bancada." >> $env:GITHUB_STEP_SUMMARY
 
+      # Roda o scripts/instalar.ps1 de verdade com o .msi recém-gerado (o runner é administrador):
+      # instala, repete (tem que ser "nada a fazer"), desinstala e confere que limpou. O enrolamento
+      # fica de fora: precisa do Hub e de alguém digitando o código.
+      - name: Teste do instalar.ps1 (instala, repete, desinstala)
+        shell: powershell
+        run: |
+          $s   = (Resolve-Path scripts/instalar.ps1).Path
+          $msi = (Get-ChildItem instalador/*.msi)[0].FullName
+          $exe = Join-Path $env:ProgramFiles (([char]0x00C1 + 'pice Gestor') + '\apice-gestor.exe')
+          $log = Join-Path $env:ProgramData 'ApiceGestor\instalar.log'
+
+          $nome = [char]0x00C1 + 'pice Gestor'
+          $run  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $apr  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+          function NoRun { (Get-Item $run).GetValue($nome) }
+
+          # 1. Instala: exe no lugar e início automático registrado no HKCU do usuário.
+          & $s -Msi $msi -SemEnrolar
+          if ($LASTEXITCODE -ne 0) { throw "instalar falhou ($LASTEXITCODE)" }
+          if (-not (Test-Path $exe)) { throw "exe não instalado em $exe" }
+          if ((NoRun) -ne "`"$exe`" --sessao") { throw "Run errado: '$(NoRun)'" }
+
+          # 2. Repete: nada a fazer, nem no .msi nem no Run.
+          & $s -Msi $msi -SemEnrolar
+          if ($LASTEXITCODE -ne 0) { throw "segunda execução falhou ($LASTEXITCODE)" }
+          if (-not (Select-String -Path $log -Pattern 'nada a fazer' -Quiet)) { throw 'segunda execução reinstalou: não é idempotente' }
+          if (-not (Select-String -Path $log -Pattern 'registrado\.\s*$' -Quiet)) { throw 'Run regravado na segunda execução' }
+
+          # 3. A pessoa desativou no Gerenciador de Tarefas (StartupApproved com data nos 8 últimos
+          #    bytes) e o valor do Run sumiu: reinstalar NÃO religa.
+          Remove-ItemProperty -Path $run -Name $nome
+          if (-not (Test-Path $apr)) { New-Item -Path $apr -Force | Out-Null }
+          [byte[]]$desativado = 3,0,0,0, 0x10,0x20,0x30,0x40,0x50,0x60,0xD9,0x01
+          New-ItemProperty -Path $apr -Name $nome -PropertyType Binary -Value $desativado -Force | Out-Null
+          & $s -Msi $msi -SemEnrolar
+          if ($LASTEXITCODE -ne 0) { throw "reinstalar com desativado falhou ($LASTEXITCODE)" }
+          if ($null -ne (NoRun)) { throw 'religou o início automático que a pessoa desativou' }
+          Remove-ItemProperty -Path $apr -Name $nome
+
+          # 4. Desinstala: some o exe e o Run; a marca de desativado (se houver) fica.
+          & $s -Msi $msi -SemEnrolar
+          if ($null -eq (NoRun)) { throw 'não registrou de novo depois de reativado' }
+          New-ItemProperty -Path $apr -Name $nome -PropertyType Binary -Value $desativado -Force | Out-Null
+          & $s -Desinstalar
+          if ($LASTEXITCODE -ne 0) { throw "desinstalar falhou ($LASTEXITCODE)" }
+          if (Test-Path $exe) { throw 'exe continua lá depois de desinstalar' }
+          if ($null -ne (NoRun)) { throw 'início automático ficou em HKCU\Run' }
+          if ($null -eq (Get-Item $apr).GetValue($nome)) { throw 'apagou a marca de desativado do Gerenciador de Tarefas' }
+          Remove-ItemProperty -Path $apr -Name $nome
+
+          # 5. Serviço órfão (MSI antigo ou falha no meio): o -Desinstalar tem que apagá-lo, mesmo sem
+          #    app instalado. O binário é qualquer um: o serviço nem chega a iniciar.
+          & sc.exe create ApiceGestor binPath= "C:\Windows\System32\cmd.exe /c exit" start= demand | Out-Null
+          if (-not (Get-Service ApiceGestor -ErrorAction SilentlyContinue)) { throw 'não consegui criar o serviço de teste' }
+          & $s -Desinstalar
+          if ($LASTEXITCODE -ne 0) { throw "desinstalar 2x falhou ($LASTEXITCODE)" }
+          if (Get-Service ApiceGestor -ErrorAction SilentlyContinue) { throw 'serviço órfão continua lá' }
+          "--- instalar.log ---"; Get-Content $log
+
       - uses: actions/upload-artifact@v6
         with:
           name: apice-gestor-msi-${{ github.sha }}-${{ github.event_name == 'workflow_dispatch' && inputs.api_base != '' && 'com-api' || 'sem-api' }}
@@ -98,3 +180,32 @@ jobs:
             instalador/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+
+  # O instalar.ps1 roda no Windows PowerShell 5.1 (o que vem no Windows 10 da bancada). Aqui só se
+  # confere que ele é lido inteiro por esse PowerShell (sintaxe e BOM) e passa no PSScriptAnalyzer.
+  instalar-ps1:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: BOM e sintaxe no Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $f = 'scripts/instalar.ps1'
+          $b = [IO.File]::ReadAllBytes($f)
+          if (-not ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)) { throw "$f precisa estar em UTF-8 com BOM" }
+          $tokens = $null; $erros = $null
+          [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$tokens, [ref]$erros) | Out-Null
+          if ($erros) { $erros | ForEach-Object { "::error file=$f,line=$($_.Extent.StartLineNumber)::$($_.Message)" }; exit 1 }
+          if ((Get-Content $f -Raw -Encoding UTF8) -notmatch [char]0x00C1) { throw 'Acentos não lidos como UTF-8' }
+          "Windows PowerShell $($PSVersionTable.PSVersion): sintaxe ok"
+
+      - name: PSScriptAnalyzer
+        shell: powershell
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -RequiredVersion 1.23.0
+          $r = Invoke-ScriptAnalyzer -Path scripts/instalar.ps1 -Severity Error,Warning `
+               -ExcludeRule PSAvoidUsingWriteHost,PSUseShouldProcessForStateChangingFunctions,PSUseApprovedVerbs,PSUseSingularNouns
+          $r | ForEach-Object { "::$(if ($_.Severity -eq 'Error') {'error'} else {'warning'}) file=scripts/instalar.ps1,line=$($_.Line)::$($_.RuleName): $($_.Message)" }
+          if ($r | Where-Object Severity -eq 'Error') { exit 1 }

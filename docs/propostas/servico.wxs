@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RASCUNHO da Esteira (09/10/2026) para o Chassi: o serviço do Windows do Ápice Gestor dentro do .msi.
+  COMBINADO com o Chassi (09/10): dois binários no mesmo crate. apice-gestor.exe = cápsula (webview);
+  apice-gestor-servico.exe = serviço (sem webview, sem Builder da UI nem single-instance). O serviço
+  abre a cápsula em cada sessão com o token do USUÁRIO (nunca SYSTEM) e a reabre se cair; com o
+  serviço presente, a casca para de gravar HKCU\Run. Esqueleto TRAVADO até o José Luiz liberar o
+  token em ProgramData (DPAPI LocalMachine) + enrolamento elevado.
+  Demanda de bloqueio de apps, opção B. Plano: Jarvis/PROJETOS/Apice-Gestor/Esteira/Plano-servico-e-assinatura-2026-10-09.md
+
+  Como entra no build (config do Tauri, decisão do Chassi):
+    tauri.conf.json → bundle.windows.wix:
+      "fragmentPaths": ["wix/servico.wxs"],
+      "componentRefs": ["ApiceGestorServico"]
+  (o tauri-bundler 2.10.1 aceita fragmentPaths/componentRefs e já carrega o WixUtilExtension.)
+
+  POR QUE UM BINÁRIO SEPARADO: no template do Tauri, o apice-gestor.exe é o File "Path" do
+  componente "Path". ServiceInstall precisa estar no MESMO componente do executável do serviço, e
+  um fragmento não consegue pôr nada dentro do componente do template. Então o serviço é um .exe
+  próprio (ex.: [[bin]] apice-gestor-servico no Cargo.toml), com o seu próprio componente aqui.
+
+  O que o instalar.ps1 espera (já implementado, feat/pipeline):
+    - serviço Name="ApiceGestor", conta LocalSystem, início Automático;
+    - o script lê a tabela ServiceInstall do .msi: se este fragmento estiver no pacote, ele confere
+      o serviço depois do msiexec; se não estiver, segue o caminho atual (HKCU\Run).
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <!-- GUID fixo: nunca trocar (o Windows Installer usa para reconhecer o componente em upgrades). -->
+      <Component Id="ApiceGestorServico" Guid="{CF0434A1-A5D2-4C04-AD81-DEFEB6F6BE83}" Win64="$(var.Win64)">
+        <!-- AJUSTAR: caminho do binário do serviço no build de release (relativo a src-tauri/,
+             ou o Chassi passa por variável). -->
+        <File Id="ApiceGestorServicoExe" Source="target\release\apice-gestor-servico.exe" KeyPath="yes" Checksum="yes" />
+
+        <ServiceInstall Id="ApiceGestorServicoInstall"
+                        Name="ApiceGestor"
+                        DisplayName="Ápice Gestor"
+                        Description="Ápice Gestor: tarefas do dia e políticas da Ápice. Parar deixa a máquina sem comunicação no Hub."
+                        Type="ownProcess"
+                        Start="auto"
+                        Account="LocalSystem"
+                        ErrorControl="normal"
+                        Vital="yes">
+          <!-- Reinicia em 1 min nas 3 primeiras quedas; zera em 1 dia. A recuperação para saída com
+               erro (failureflag) o instalar.ps1 liga com sc.exe, porque o util:ServiceConfig não cobre. -->
+          <util:ServiceConfig FirstFailureActionType="restart"
+                              SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart"
+                              RestartServiceDelayInSeconds="60"
+                              ResetPeriodInDays="1" />
+        </ServiceInstall>
+
+        <!-- Sobe na instalação; para antes de trocar arquivos (instalar/atualizar/remover); some na
+             desinstalação. Wait="yes": o msiexec só termina quando o serviço respondeu. -->
+        <ServiceControl Id="ApiceGestorServicoControl"
+                        Name="ApiceGestor"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>
