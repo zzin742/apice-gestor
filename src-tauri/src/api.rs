@@ -277,7 +277,11 @@ pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
         .get("token")
         .and_then(Value::as_str)
         .ok_or_else(|| ErroApi::novo("server_error", "O Ápice Hub não devolveu o token."))?;
-    crate::cofre::gravar(token).map_err(|_| {
+    crate::cofre::gravar(token).map_err(|e| {
+        // O motivo (IO/icacls/DPAPI, nunca o token) vai ao stderr; a mensagem ao usuário pede admin.
+        if let crate::cofre::ErroCofre::Falha(motivo) = &e {
+            eprintln!("cofre: {motivo}");
+        }
         ErroApi::novo(
             "server_error",
             "Não foi possível proteger o cofre; execute o enrolamento como administrador.",

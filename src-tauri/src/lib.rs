@@ -309,8 +309,6 @@ pub fn run() {
             // processo do serviço (sub-peça 3b). Ligados com a Api/Telemetria gerenciadas.
             let api = (*app.state::<Arc<api::Api>>()).clone();
             let telemetria = (*app.state::<Arc<batimento::Telemetria>>()).clone();
-            let data_dir = app.path().app_local_data_dir().unwrap_or_default();
-
             // Pausa na cápsula: esconde/mostra a janela e marca o estado (o single-instance lê).
             let app_pausa = app.handle().clone();
             let telem_pausa = telemetria.clone();
@@ -325,13 +323,21 @@ pub fn run() {
                 }
             });
 
-            tauri::async_runtime::spawn(batimento::rodar(
-                api.clone(),
-                telemetria,
-                data_dir.clone(),
-                pausa,
-            ));
-            tauri::async_runtime::spawn(comandos::rodar(api, data_dir));
+            // Sem diretório de dados não dá para garantir a trava (c) do desligar (o id da ordem
+            // executada precisa de um lugar fixo); então nem o heartbeat nem as ordens ligam. A
+            // cápsula (UI) segue funcionando. (C1 do Diretor: data_dir vazio furava a trava c.)
+            match app.path().app_local_data_dir() {
+                Ok(data_dir) => {
+                    tauri::async_runtime::spawn(batimento::rodar(
+                        api.clone(),
+                        telemetria,
+                        data_dir.clone(),
+                        pausa,
+                    ));
+                    tauri::async_runtime::spawn(comandos::rodar(api, data_dir));
+                }
+                Err(e) => eprintln!("sem diretório de dados ({e}); heartbeat e ordens não iniciados"),
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
