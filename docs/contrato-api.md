@@ -41,8 +41,8 @@ qualquer dado novo que a interface precisar vira campo novo aqui, combinado com 
 
 - O token sai **uma vez**, na resposta do `enroll`. O Hub guarda só o **hash SHA-256** dele.
 - **O token é da máquina e mora no cofre da máquina** (desde 09/10/2026, com o agente como serviço
-  do Windows — proposta do Chassi, fechada pela Ponte; **a regra 4 do `AGENTS.md`, "keychain do
-  Windows", depende do José Luiz atualizar**):
+  do Windows — proposta do Chassi, fechada pela Ponte; **aprovado pelo José Luiz**, regra 4 do
+  `AGENTS.md` reescrita em `main` 10a93e4):
   - arquivo `%ProgramData%\ApiceGestor\device.token`, cifrado com **DPAPI escopo LocalMachine**;
   - pasta `%ProgramData%\ApiceGestor\` com **herança desligada** e ACL só **SYSTEM** e
     **Administradores** (controle total). Sem isso, a ACL padrão do `ProgramData` deixa *Usuários*
