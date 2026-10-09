@@ -157,6 +157,13 @@ fn ligar_autostart(app: &tauri::App) {
         if elevado() {
             return;
         }
+        // D4: quando o serviço cuida do "sempre rodando" (ele lança a cápsula), a cápsula NÃO
+        // registra o HKCU\Run — senão disputaria com o serviço o que o instalar.ps1 já tira.
+        // Lançada pelo serviço vem com --pelo-servico (W5); aberta à mão, o SCM confirma o serviço.
+        let pelo_servico = std::env::args().any(|a| a == "--pelo-servico");
+        if pelo_servico || servico_instalado() {
+            return;
+        }
         let nome = &app.package_info().name;
         // Decisão do José Luiz (09/10/2026): se a pessoa desativou em Gerenciador de Tarefas →
         // Aplicativos de inicialização, respeita. O enable() do plugin regravaria como ativado.
@@ -263,6 +270,28 @@ fn registrar_run(nome: &str, comando: &str) {
             dados.as_ptr().cast(),
             (dados.len() * 2) as u32,
         );
+    }
+}
+
+/// O serviço ApiceGestor está instalado nesta máquina? (consulta o SCM, leitura; usuário comum pode).
+#[cfg(all(windows, not(debug_assertions)))]
+fn servico_instalado() -> bool {
+    use windows_sys::Win32::System::Services::{
+        CloseServiceHandle, OpenSCManagerW, OpenServiceW, SC_MANAGER_CONNECT, SERVICE_QUERY_STATUS,
+    };
+    let nome: Vec<u16> = servico::NOME_SERVICO.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let scm = OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT);
+        if scm.is_null() {
+            return false;
+        }
+        let svc = OpenServiceW(scm, nome.as_ptr(), SERVICE_QUERY_STATUS);
+        let existe = !svc.is_null();
+        if existe {
+            CloseServiceHandle(svc);
+        }
+        CloseServiceHandle(scm);
+        existe
     }
 }
 

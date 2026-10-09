@@ -164,7 +164,16 @@ mod win {
     }
 
     async fn conversa(p: &Pedido) -> io::Result<Resposta> {
-        let mut cliente: NamedPipeClient = ClientOptions::new().open(PIPE)?;
+        // G1: entre o serviço spawnar o atendimento e criar a próxima instância há uma fresta em
+        // que o pipe pode estar ocupado (ERROR_PIPE_BUSY). Espera 100 ms e tenta mais uma vez.
+        let mut cliente: NamedPipeClient = match ClientOptions::new().open(PIPE) {
+            Ok(c) => c,
+            Err(e) if e.raw_os_error() == Some(231) => {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                ClientOptions::new().open(PIPE)?
+            }
+            Err(e) => return Err(e),
+        };
         cliente.write_all(&quadro(p)).await?;
         let mut buf = Vec::new();
         let mut leitor = BufReader::new((&mut cliente).take(LIMITE_QUADRO));

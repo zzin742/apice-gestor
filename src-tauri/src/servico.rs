@@ -28,6 +28,8 @@ mod windows {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use std::path::Path;
+
     use serde_json::Value;
     use windows_service::service::{
         ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
@@ -93,6 +95,11 @@ mod windows {
                 let telemetria = Arc::new(Telemetria::default());
                 rt.spawn(servir_ipc(api.clone(), telemetria.clone()));
                 rt.spawn(bloqueio::rodar(api.clone()));
+                // 4/4: mantém a cápsula viva na sessão do usuário (com o token DELE), fora do
+                // runtime async — FFI síncrono do WTS/CreateProcessAsUser numa thread dedicada.
+                if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
+                    std::thread::spawn(move || crate::sessao::lancar_loop(dir.join("apice-gestor.exe")));
+                }
                 // D2: dados da MÁQUINA (mesma pasta do cofre, ACL fechada), não app_local_data_dir.
                 match crate::cofre::pasta_dados() {
                     Some(data_dir) => {
