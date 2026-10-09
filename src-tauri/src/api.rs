@@ -10,8 +10,6 @@ use reqwest::{header, StatusCode};
 use serde::Serialize;
 use serde_json::Value;
 
-/// Onde o token do dispositivo fica guardado (Credential Manager no Windows, Keychain no Mac).
-
 /// Versão do contrato que o agente fala (§1.1).
 const API_VERSAO: &str = "1";
 
@@ -351,7 +349,10 @@ fn erro_cofre(e: crate::cofre::ErroCofre) -> ErroApi {
 }
 
 fn falha_cofre() -> ErroApi {
-    ErroApi::novo("server_error", "Não foi possível usar o cofre de credenciais do Windows.")
+    ErroApi::novo(
+        "server_error",
+        "Não foi possível proteger o cofre de credenciais; execute o enrolamento como administrador.",
+    )
 }
 
 fn ler_token() -> Result<String, ErroApi> {
