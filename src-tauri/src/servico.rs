@@ -121,47 +121,65 @@ mod windows {
 
     /// Servidor IPC (named pipe). A2: uma conexão = um pedido + uma resposta, depois desconecta.
     async fn servir_ipc(api: Arc<Api>, telemetria: Arc<Telemetria>) {
-        let mut primeira = true;
+        // E1: a próxima instância nasce ANTES de atender a atual, e cada conexão é atendida numa
+        // task com timeout — um cliente mudo ou lento não trava o serviço nem segura os outros.
+        let mut servidor = instancia_com_backoff(true).await;
         loop {
-            // A Seguranca carrega um ponteiro cru (não-Send); criamos e usamos a instância num bloco
-            // síncrono e dropamos a Seguranca ANTES de qualquer await, para o future ser Send.
-            let pipe = {
-                let seg = match ipc::Seguranca::nova() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        log(&format!("IPC: segurança do pipe falhou: {e}"));
-                        return;
-                    }
-                };
-                match ipc::instancia_servidor(&seg, primeira) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log(&format!("IPC: criar instância falhou: {e}"));
-                        return;
-                    }
-                }
-            };
-            primeira = false;
-            let mut pipe = pipe;
-            if pipe.connect().await.is_err() {
+            if servidor.connect().await.is_err() {
+                servidor = instancia_com_backoff(false).await;
                 continue;
             }
-            match ipc::ler_pedido(&mut pipe).await {
-                Leitura::Pedido(p) => {
-                    let r = atender(p, &api, &telemetria).await;
-                    let _ = ipc::responder(&mut pipe, &r).await;
-                }
-                Leitura::Invalido => {
-                    let _ = ipc::responder(
-                        &mut pipe,
-                        &Resposta::erro("bad_request", "pedido inválido"),
-                    )
-                    .await;
-                }
-                Leitura::Vazia => {}
-            }
-            // `pipe` sai de escopo aqui: desconecta. A próxima volta cria nova instância.
+            let proxima = instancia_com_backoff(false).await;
+            let conexao = std::mem::replace(&mut servidor, proxima);
+            tokio::spawn(atender_conexao(conexao, api.clone(), telemetria.clone()));
         }
+    }
+
+    /// Cria a Seguranca (bloco síncrono, sem await) e uma instância do servidor. A Seguranca é
+    /// dropada ao retornar, antes de qualquer await — o future chamador fica Send.
+    fn nova_instancia(
+        primeira: bool,
+    ) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+        let seg = ipc::Seguranca::nova()?;
+        ipc::instancia_servidor(&seg, primeira)
+    }
+
+    /// E2: nunca desiste do pipe. Em erro (inclusive sequestro do nome quando `primeira`), loga e
+    /// tenta de novo com espera crescente (5→60 s), sem sair do laço — o SCM não recupera o IPC.
+    async fn instancia_com_backoff(
+        primeira: bool,
+    ) -> tokio::net::windows::named_pipe::NamedPipeServer {
+        let mut espera = 5u64;
+        loop {
+            match nova_instancia(primeira) {
+                Ok(p) => return p,
+                Err(e) => {
+                    if primeira {
+                        log(&format!("IPC: nome do pipe indisponível (sequestro?): {e}"));
+                    } else {
+                        log(&format!("IPC: criar instância falhou: {e}"));
+                    }
+                    tokio::time::sleep(Duration::from_secs(espera)).await;
+                    espera = (espera * 2).min(60);
+                }
+            }
+        }
+    }
+
+    /// Uma conexão: um pedido, uma resposta, desconecta (A2). Timeout em cada etapa (E1).
+    async fn atender_conexao(
+        mut pipe: tokio::net::windows::named_pipe::NamedPipeServer,
+        api: Arc<Api>,
+        telemetria: Arc<Telemetria>,
+    ) {
+        const LIMITE: Duration = Duration::from_secs(5);
+        let resposta = match tokio::time::timeout(LIMITE, ipc::ler_pedido(&mut pipe)).await {
+            Ok(Leitura::Pedido(p)) => atender(p, &api, &telemetria).await,
+            Ok(Leitura::Invalido) => Resposta::erro("bad_request", "pedido inválido"),
+            // Vazia ou cliente calado até o timeout: só desconecta.
+            _ => return,
+        };
+        let _ = tokio::time::timeout(LIMITE, ipc::responder(&mut pipe, &resposta)).await;
     }
 
     /// Resolve um pedido da cápsula. Só leitura/telemetria: nada que desligue ou bloqueie vem daqui.
@@ -187,13 +205,15 @@ mod windows {
     /// jeito de a Esteira diagnosticar queda na bancada (stderr de um serviço vai para o nada).
     fn log(msg: &str) {
         use std::io::Write;
+        const TETO: u64 = 1024 * 1024; // ~1 MB (E7d)
         let Some(pasta) = crate::cofre::pasta_dados() else { return };
         let _ = std::fs::create_dir_all(&pasta);
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(pasta.join("servico.log"))
-        {
+        let arquivo = pasta.join("servico.log");
+        // Rotação simples: ao passar de ~1 MB, vira servico.log.1 (um histórico só).
+        if std::fs::metadata(&arquivo).map(|m| m.len() > TETO).unwrap_or(false) {
+            let _ = std::fs::rename(&arquivo, pasta.join("servico.log.1"));
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&arquivo) {
             let _ = writeln!(f, "{} v{} {}", crate::api::agora(), env!("CARGO_PKG_VERSION"), msg);
         }
     }

@@ -7,7 +7,7 @@
 //! serviço, avisar a cápsula pelo IPC.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -26,12 +26,12 @@ const ESPERA_SEM_TOKEN: Duration = Duration::from_secs(300);
 /// Callback de pausa: recebe o `paused` do config. Implementado pelo chamador.
 pub type Pausa = Arc<dyn Fn(bool) + Send + Sync>;
 
-/// O que a interface relata pelo `painel_evento`, mais a marca de "escondida por pausa".
+/// Contadores de UI do SERVIÇO (chegam da cápsula por IPC e vão no heartbeat). A pausa é estado da
+/// cápsula (PausaCapsula, em lib.rs), não daqui — D1.
 #[derive(Default)]
 pub struct Telemetria {
     aberturas: AtomicU32,
     bom_dia_em: Mutex<Option<String>>,
-    escondida_por_pausa: AtomicBool,
 }
 
 impl Telemetria {
@@ -44,17 +44,6 @@ impl Telemetria {
             "bom_dia" => *self.bom_dia_em.lock().unwrap() = Some(api::agora()),
             _ => {}
         }
-    }
-
-    /// Marca/limpa "escondida por pausa"; devolve o valor anterior. Usado pelo callback de pausa
-    /// da cápsula para só reexibir a janela que ele mesmo escondeu.
-    pub fn definir_escondida(&self, v: bool) -> bool {
-        self.escondida_por_pausa.swap(v, Ordering::SeqCst)
-    }
-
-    /// A cápsula está escondida pela pausa do Hub? (o single-instance não reexibe nesse caso).
-    pub fn escondida(&self) -> bool {
-        self.escondida_por_pausa.load(Ordering::SeqCst)
     }
 }
 

@@ -6,7 +6,6 @@
 //! não vem do Hub e não é editável remotamente.
 //!
 //! O agente **só encerra** o processo (§9.1): não apaga, não desinstala, não bloqueia recurso.
-#![allow(dead_code)] // ligado quando o serviço entrar
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -91,11 +90,18 @@ fn nome_de_sistema(nome: &str) -> bool {
 
 /// Qualquer coisa dentro da pasta do Windows (System32 etc.) é do SO — protege de sobra.
 fn caminho_protegido(caminho: &str) -> bool {
+    if caminho.is_empty() {
+        return false;
+    }
     let c = caminho.to_ascii_lowercase().replace('/', "\\");
-    let raiz = std::env::var("SystemRoot")
+    let mut raiz = std::env::var("SystemRoot")
         .unwrap_or_else(|_| r"C:\Windows".into())
         .to_ascii_lowercase();
-    !c.is_empty() && c.starts_with(&raiz)
+    // Barra final: c:\windows\ não protege c:\windows.old (E7e).
+    if !raiz.ends_with('\\') {
+        raiz.push('\\');
+    }
+    c.starts_with(&raiz)
 }
 
 fn eh_o_gestor(proc: &Processo) -> bool {
@@ -156,9 +162,16 @@ fn caminho_casa(padrao: &str, real: &str) -> bool {
     match padrao.split_once('*') {
         None => padrao == real,
         Some((antes, depois)) => {
-            real.starts_with(&antes)
-                && real.ends_with(&depois)
-                && real.len() >= antes.len() + depois.len()
+            if !real.starts_with(&antes) || !real.ends_with(&depois) {
+                return false;
+            }
+            if real.len() < antes.len() + depois.len() {
+                return false;
+            }
+            // E4: o * é um único segmento de usuário — o que ele cobre não pode ter barra, senão
+            // C:\Users\*\x.exe casaria C:\Users\joao\Temp\sub\x.exe.
+            let coberto = &real[antes.len()..real.len() - depois.len()];
+            !coberto.contains('\\')
         }
     }
 }
@@ -406,6 +419,22 @@ mod testes {
         assert_eq!(avaliar(&p, &[it.clone()]), None); // sem publisher no processo
         p.publisher = Some("CN=Fulano Games Ltda".into());
         assert_eq!(avaliar(&p, &[it]), Some(("blk4".into(), Acao::Encerrar)));
+    }
+
+    #[test]
+    fn curinga_nao_atravessa_barra() {
+        // E4: o * cobre só um segmento; não pode casar subpasta.
+        let p = proc("x.exe", r"C:\Users\joao\Temp\sub\x.exe");
+        let it = item("b", "x.exe", Criterio::NameAndPath, Some(r"C:\Users\*\x.exe"));
+        assert_eq!(avaliar(&p, &[it]), None);
+    }
+
+    #[test]
+    fn windows_old_nao_e_protegido() {
+        // E7e: c:\windows protege c:\windows\..., mas não c:\windows.old.
+        std::env::set_var("SystemRoot", r"C:\Windows");
+        assert!(super::caminho_protegido(r"C:\Windows\system32\x.exe"));
+        assert!(!super::caminho_protegido(r"C:\Windows.old\x.exe"));
     }
 
     #[test]

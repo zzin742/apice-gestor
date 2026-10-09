@@ -153,12 +153,13 @@ mod win {
         pipe.write_all(&quadro(r)).await
     }
 
-    /// Cliente (cápsula): abre o pipe, manda um pedido, lê a resposta.
+    /// Cliente (cápsula): abre o pipe, manda um pedido, lê a resposta. Timeout de 10 s (E7a): um
+    /// serviço travado não pendura a cápsula.
     pub async fn pedir(p: &Pedido) -> Resposta {
-        match conversa(p).await {
-            Ok(r) => r,
-            // Serviço não está no ar: mesmo contrato de "sem conexão".
-            Err(_) => Resposta::erro("unavailable", "O serviço do Ápice Gestor não respondeu."),
+        match tokio::time::timeout(std::time::Duration::from_secs(10), conversa(p)).await {
+            Ok(Ok(r)) => r,
+            // Serviço fora do ar ou sem resposta a tempo: mesmo contrato de "sem conexão".
+            _ => Resposta::erro("unavailable", "O serviço do Ápice Gestor não respondeu."),
         }
     }
 
@@ -177,7 +178,27 @@ pub use win::{instancia_servidor, ler_pedido, pedir, responder, Leitura, Seguran
 
 // ----- Mac (dev): sem named pipe -----
 
-#[cfg(not(windows))]
+// Dev no Mac: sem serviço nem pipe. Para a interface ter dados no localhost (regra do José Luiz
+// de mostrar no localhost), o cliente fala direto com uma Api local (mock). Em release ou no
+// Windows isto NÃO existe — lá a cápsula usa o named pipe acima.
+#[cfg(all(not(windows), debug_assertions))]
+pub async fn pedir(p: &Pedido) -> Resposta {
+    use crate::api::Api;
+    use std::sync::OnceLock;
+    static API: OnceLock<Api> = OnceLock::new();
+    let api = API.get_or_init(Api::new);
+    let de = |r: Result<serde_json::Value, crate::api::ErroApi>| match r {
+        Ok(dados) => Resposta::ok(dados),
+        Err(e) => Resposta::erro(&e.code, &e.message),
+    };
+    match p {
+        Pedido::Tarefas => de(api.get("me/tasks").await),
+        Pedido::Config => de(api.get("me/config").await),
+        Pedido::Evento { .. } => Resposta::ok(serde_json::Value::Null),
+    }
+}
+
+#[cfg(all(not(windows), not(debug_assertions)))]
 pub async fn pedir(_p: &Pedido) -> Resposta {
     Resposta::erro("unavailable", "IPC só existe no Windows.")
 }
