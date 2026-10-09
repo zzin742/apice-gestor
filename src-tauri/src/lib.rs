@@ -6,6 +6,7 @@ mod comandos;
 mod desligar;
 mod enrolar;
 mod janela;
+mod servico;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -80,6 +81,17 @@ fn bandeja(app: &tauri::App) -> tauri::Result<()> {
 /// `--enrolar <código>`: devolve o código de saída do processo.
 pub fn enrolar(codigo: &str) -> i32 {
     enrolar::executar(codigo)
+}
+
+/// Modo serviço (`apice-gestor-servico.exe`): bloqueia até o SCM parar. Devolve o código de saída.
+pub fn rodar_servico() -> i32 {
+    match servico::executar() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("serviço: {e}");
+            1
+        }
+    }
 }
 
 /// Em release o executável é de janela (sem console). Se o stdout não veio redirecionado,

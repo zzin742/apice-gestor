@@ -9,6 +9,14 @@ edition = "2021"
 name = "apice_gestor_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "apice-gestor"
+path = "src/main.rs"
+
+[[bin]]
+name = "apice-gestor-servico"
+path = "src/servico_main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -24,6 +32,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 tokio = { version = "1", features = ["time"] }
 
 [target.'cfg(windows)'.dependencies]
+windows-service = "0.8.1"
 windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_Registry", "Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_Security_Cryptography", "Win32_System_Diagnostics_ToolHelp"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
