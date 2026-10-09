@@ -594,3 +594,141 @@ log.
 
 Padrão do §1.4. Código novo: `409 command_gone` — "Esta ordem não está mais disponível." O agente não
 mostra ao usuário; só registra.
+
+---
+
+## 9. Lista de bloqueio de aplicativos por máquina
+
+Admin em `/admin/maquinas` monta, **por máquina**, uma lista de aplicativos que não devem rodar
+naquele PC. O serviço (§serviço, conta SYSTEM) encerra o processo que casa com a lista quando ele
+abre. **Opção B:** usuário comum segue o admin; só um administrador do PC desfaz. AppLocker ficou
+fora porque há Windows Home no parque (sem AppLocker). Mudança compatível: `X-Gestor-Api: 1` segue,
+e o agente 0.1.0, que não conhece estas rotas, ignora.
+
+### 9.1 As invariantes de proteção (primeiro, e não negociáveis)
+
+Estas três regras valem **acima** de qualquer item da lista. Um erro na lista não pode derrubar um
+app essencial em 95 máquinas, então a proteção é verificada **nos dois lados** (Hub e agente):
+
+1. **Allowlist de protegidos sempre vence.** O agente carrega uma allowlist **embutida** (não vem do
+   Hub, não é editável remotamente) e **nunca** encerra:
+   - processos do **sistema operacional** (ex.: `System`, `smss.exe`, `csrss.exe`, `wininit.exe`,
+     `winlogon.exe`, `services.exe`, `lsass.exe`, `explorer.exe`, `dwm.exe`, e os de `%SystemRoot%`
+     essenciais ao logon e à sessão);
+   - o **próprio Ápice Gestor** (o serviço e a cápsula);
+   - **produtos de segurança/antivírus** detectados na máquina (Defender e os registrados no
+     Windows Security Center).
+   Se um item da lista casar com algo da allowlist, o agente **ignora o item** e **reporta
+   `refused_protected`** (§9.5) para o admin ver que a lista tem um item inválido.
+2. **A lista é só do admin e por máquina.** Só papéis de administração do Hub editam. O usuário da
+   máquina não vê nem muda a lista. Nenhuma rota do agente **escreve** na lista.
+3. **O Hub recusa cadastrar protegido.** Ao montar a lista, o Hub valida contra a mesma allowlist
+   e **recusa** (`422 protected_target`, no admin, não nesta API) adicionar processo de sistema, o
+   Gestor ou antivírus. A dupla checagem (Hub **e** agente) é proposital: nenhuma das duas sozinha
+   pode falhar para o sistema aberto.
+
+O agente **só encerra o processo**. Não apaga arquivo, não desinstala, não bloqueia recurso do
+Windows, não impede a reinstalação — reabriu, encerra de novo. É a opção B: controle do que roda,
+não destruição.
+
+### 9.2 Rotas
+
+| Rota | Função |
+|---|---|
+| `GET  /api/gestor/me/blocklist` | a lista **deste dispositivo**, versionada |
+| `POST /api/gestor/me/blocklist/events` | o agente reporta **só o que casou** com a lista |
+
+Token de dispositivo (§1.2). A ordem/alvo é **por dispositivo, nunca por pessoa** (como no §8.2).
+Cabeçalhos como §1.3: `Cache-Control: private, no-cache`, `Vary: Authorization`; o `GET` suporta
+`ETag`/`304` (a lista muda pouco).
+
+#### `GET /api/gestor/me/blocklist`
+
+Chamada a cada `blocklist_poll_interval_seconds` (§9.6). O agente guarda a última versão e só age
+sobre a versão vigente.
+
+```json
+{
+  "api": 1,
+  "version": "bl-2026-10-09T17:04:00Z",
+  "entries": [
+    { "id": "blk_01JB…", "name": "jogo.exe", "match": "name_and_publisher",
+      "publisher": "CN=Fulano Games Ltda", "path": null, "reason": "Jogo" },
+    { "id": "blk_01JC…", "name": "instalador.exe", "match": "name_and_path",
+      "path": "C:\\Users\\*\\Downloads\\instalador.exe", "publisher": null, "reason": null }
+  ]
+}
+```
+
+| Campo | Nota |
+|---|---|
+| `version` | muda a cada edição no Hub; alimenta o `ETag` e o relatório do admin |
+| `entries[].id` | opaco, `blk_`; estável enquanto o item existir |
+| `entries[].name` | nome do executável (imagem), sem distinção de caixa |
+| `entries[].match` | **critério forte obrigatório:** `name_and_path`, `name_and_publisher` ou `path_exact`. **`name` sozinho não é aceito** (§9.3) |
+| `entries[].path` | caminho completo; curinga só em segmento de usuário (`\Users\*\`), nunca `*` solto |
+| `entries[].publisher` | sujeito do certificado do editor (Authenticode) |
+| `entries[].reason` | texto curto do admin, ou `null`; o agente não mostra nada ao usuário na v1 |
+
+Desbloquear = o admin tira o item da lista; na próxima busca o `id` some e o agente para de agir.
+
+#### `POST /api/gestor/me/blocklist/events`
+
+O agente reporta **apenas** processos que casaram com a lista (ou itens recusados pela allowlist).
+**Nunca** manda a lista do que a pessoa abre — só o casamento com um item explícito. Alimenta o
+histórico do admin ("o que foi bloqueado nesta máquina").
+
+```json
+{ "events": [
+  { "entry_id": "blk_01JB…", "name": "jogo.exe", "action": "terminated",
+    "at": "2026-10-09T17:05:12-03:00" },
+  { "entry_id": "blk_01JD…", "name": "defender-like.exe", "action": "refused_protected",
+    "at": "2026-10-09T17:05:00-03:00" }
+] }
+```
+
+`action ∈ terminated | terminate_failed | refused_protected`. Resposta `200 { "api": 1 }`. Falha
+de envio nunca aparece ao usuário; o agente reenvia no próximo ciclo.
+
+### 9.3 Identidade do app — o que casa, e o que não
+
+- Um item **precisa** de um critério forte (`match`): nome **mais** caminho, nome **mais** editor,
+  ou caminho exato. **Nome sozinho é recusado pelo Hub e ignorado pelo agente** — nomes genéricos
+  (`setup.exe`, `node.exe`) derrubariam coisa demais.
+- O agente compara, do processo em execução: nome da imagem, caminho completo e, quando o item pede,
+  o **editor** da assinatura Authenticode (se o arquivo não for assinado, `publisher` nunca casa).
+- Allowlist (§9.1) é checada **antes** de qualquer casamento. Protegido nunca é encerrado, mesmo que
+  um item mal montado aponte para ele.
+
+### 9.4 Campos novos em `me/config`
+
+```json
+{ "blocklist_poll_interval_seconds": 120 }
+```
+
+`0` = enforcement desligado (a máquina não bloqueia nada); mínimo 30; independe de `paused`. O serviço
+também reavalia a lista quando o `heartbeat` indicar `version` nova, e a aplica a processos que já
+estão abertos, não só aos que abrirem depois.
+
+### 9.5 Reporte e privacidade
+
+O relatório do §9.2 é **só enforcement**, não vigilância: entra o que casou com um item da lista ou
+o que a allowlist recusou. Uso de programas em geral, tela, teclado e janelas **continuam fora**
+(Arquitetura §1/§5). O admin vê, por máquina, quais itens da lista agiram e quando.
+
+### 9.6 Critérios de aceite (bancada, com o José Luiz presente)
+
+1. Admin bloqueia um app de teste (ex.: `bloco-notas-copia.exe` com `name_and_path`) → abrir na
+   bancada → o app **fecha sozinho** em segundos; reabrir → fecha de novo.
+2. Admin **desbloqueia** → o app **abre e fica** aberto.
+3. Admin tenta bloquear `explorer.exe` / o próprio Gestor / o antivírus → o Hub **recusa**; e, se um
+   item protegido for forçado por outro caminho, o agente **não encerra** e reporta `refused_protected`.
+4. Item só com `name` → o Hub **recusa**; a bancada confirma que nada com nome genérico cai.
+5. `blocklist_poll_interval_seconds = 0` → nada é bloqueado.
+6. Reporte: o histórico do admin mostra **só** os bloqueios, nunca a lista de tudo que foi aberto.
+
+### 9.7 Erros
+
+Padrão do §1.4. Nenhum código novo para o agente nas rotas do §9.2 (a recusa de protegido é
+`422 protected_target` no **admin** do Hub, não nesta API). O agente trata `401`/`unavailable`
+como no resto do contrato: sem lista nova, mantém a última versão vigente e continua protegendo.
