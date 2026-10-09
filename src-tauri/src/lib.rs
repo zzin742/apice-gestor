@@ -100,18 +100,20 @@ pub fn usar_console_do_pai() {
 fn ligar_autostart(app: &tauri::App) {
     #[cfg(all(windows, not(debug_assertions)))]
     {
-        use tauri_plugin_autostart::ManagerExt;
         if elevado() {
             return;
         }
+        let nome = &app.package_info().name;
         // Decisão do José Luiz (09/10/2026): se a pessoa desativou em Gerenciador de Tarefas →
         // Aplicativos de inicialização, respeita. O enable() do plugin regravaria como ativado.
-        if desativado_pelo_usuario(&app.package_info().name) {
+        if desativado_pelo_usuario(nome) {
             return;
         }
-        let autostart = app.autolaunch();
-        if !autostart.is_enabled().unwrap_or(true) {
-            let _ = autostart.enable();
+        // Gravamos nós, com aspas: o enable() do plugin grava o caminho sem aspas, e com espaço
+        // ("Program Files") o Windows tentaria C:\Program.exe antes. Valor já existente (do
+        // instalar.ps1 ou de antes) não é tocado.
+        if let Ok(exe) = std::env::current_exe() {
+            registrar_run(nome, &format!("\"{}\" --sessao", exe.display()));
         }
     }
     #[cfg(not(all(windows, not(debug_assertions))))]
@@ -140,10 +142,74 @@ fn desativado_pelo_usuario(nome: &str) -> bool {
             &mut tamanho,
         )
     };
-    if status != 0 || tamanho == 0 {
-        return false;
+    status == 0 && marcado_desativado(&dados[..tamanho as usize])
+}
+
+/// Lê o valor binário da StartupApproved: primeiro byte ímpar (0x03/0x07) ou hora da desativação
+/// nos 8 últimos bytes = desativado. Vazio = nunca foi desativado.
+#[cfg_attr(not(all(windows, not(debug_assertions))), allow(dead_code))]
+fn marcado_desativado(dados: &[u8]) -> bool {
+    match dados.first() {
+        None => false,
+        Some(primeiro) => {
+            primeiro & 1 == 1 || (dados.len() >= 12 && dados[4..12].iter().any(|b| *b != 0))
+        }
     }
-    dados[0] & 1 == 1 || (tamanho >= 12 && dados[4..12].iter().any(|b| *b != 0))
+}
+
+#[cfg(test)]
+mod testes {
+    use super::marcado_desativado;
+
+    #[test]
+    fn startup_approved() {
+        // Gravado pelo plugin/Windows quando ativado.
+        assert!(!marcado_desativado(&[0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert!(!marcado_desativado(&[0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        // Desativado no Gerenciador de Tarefas: byte ímpar e a hora (FILETIME) no fim.
+        assert!(marcado_desativado(&[0x03, 0, 0, 0, 0x10, 0x8f, 0x2a, 0x1b, 0x5c, 0x3a, 0xdb, 0x01]));
+        assert!(marcado_desativado(&[0x07, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        // Só a hora preenchida já conta como desativado (critério do auto-launch).
+        assert!(marcado_desativado(&[0x02, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]));
+        // Sem valor.
+        assert!(!marcado_desativado(&[]));
+    }
+}
+
+/// Grava HKCU\...\Run\<nome> = <comando> só se o valor ainda não existir.
+#[cfg(all(windows, not(debug_assertions)))]
+fn registrar_run(nome: &str, comando: &str) {
+    use windows_sys::Win32::System::Registry::{
+        RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ, RRF_RT_ANY,
+    };
+    let largo = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let chave = largo(r"Software\Microsoft\Windows\CurrentVersion\Run");
+    let valor = largo(nome);
+    let existe = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            chave.as_ptr(),
+            valor.as_ptr(),
+            RRF_RT_ANY,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    } == 0;
+    if existe {
+        return;
+    }
+    let dados = largo(comando);
+    unsafe {
+        RegSetKeyValueW(
+            HKEY_CURRENT_USER,
+            chave.as_ptr(),
+            valor.as_ptr(),
+            REG_SZ,
+            dados.as_ptr().cast(),
+            (dados.len() * 2) as u32,
+        );
+    }
 }
 
 /// O processo está rodando como administrador (UAC elevado)?
