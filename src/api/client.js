@@ -70,6 +70,14 @@ export function createClient({ baseUrl = MOCK_BASE_URL, token = null, agentVersi
     heartbeat(info) {
       return call('POST', '/heartbeat', { body: { sent_at: new Date().toISOString(), agent_version: agentVersion, ...info } });
     },
+    /** Ordens pendentes deste dispositivo (§8.2). Sem cache. */
+    getCommands() { return call('GET', '/me/commands'); },
+    /** Reivindica a ordem (§8.2). Resolve só com 200; QUALQUER outra coisa rejeita → não executar. */
+    claimCommand(id) { return call('POST', `/me/commands/${encodeURIComponent(id)}/claim`, { body: {} }); },
+    /** Avisa que a execução falhou e o PC continuou ligado (§8.2). */
+    reportCommandFailed(id, error) {
+      return call('POST', `/me/commands/${encodeURIComponent(id)}/result`, { body: { status: 'failed', error: String(error).slice(0, 500) } });
+    },
     /** Troca o token (depois do enroll) e limpa o cache. */
     setToken(t) { token = t; cache.clear(); },
   };
@@ -88,4 +96,17 @@ export function tabsOf(data) {
     semana: { count: data.summary.week, tasks: t.filter((x) => x.bucket === 'week') },
     todas: { count: data.summary.open_total, tasks: t.filter((x) => x.status !== 'done') },
   };
+}
+
+// Travas do agente que valem ANTES do claim (contrato §8.6). Função pura, para a casca seguir à risca:
+//   'claim'                   → pode reivindicar (e só executa se o claim der 200 — trava a)
+//   'ignore:unknown_type'     → tipo que esta versão não conhece
+//   'ignore:already_executed' → id já gravado localmente (trava c)
+//   'ignore:before_start'     → ordem mais velha que esta execução do app (trava b)
+// processUptimeSeconds: relógio monotônico DESTE processo, nunca o relógio do PC.
+export function commandDecision(cmd, { processUptimeSeconds, executedIds }) {
+  if (cmd.type !== 'shutdown') return 'ignore:unknown_type';
+  if (executedIds.has(cmd.id)) return 'ignore:already_executed';
+  if (!(cmd.age_seconds <= processUptimeSeconds)) return 'ignore:before_start'; // NaN/indefinido também ignora
+  return 'claim';
 }

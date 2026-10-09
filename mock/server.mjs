@@ -33,6 +33,30 @@ function saveIssued() {
 
 const heartbeats = new Map(); // pessoa → último corpo (só memória; é telemetria)
 
+// ---------- Ordens ao dispositivo (§8) — só memória ----------
+const COMMAND_TTL_S = 300; // vence em 5 min sem claim (§8.3)
+const commands = new Map(); // id → { id, device_id, type, created_ms, state, claimed_ms, closed_ms, error, fail_claim }
+let clockOffsetMs = 0; // só para teste: /__mock/clock avança o relógio das ordens
+const nowMs = () => now().getTime() + clockOffsetMs;
+
+function expireStale() {
+  const t = nowMs();
+  for (const c of commands.values())
+    if (c.state === 'pending' && t - c.created_ms >= COMMAND_TTL_S * 1000) { c.state = 'expired'; c.closed_ms = c.created_ms + COMMAND_TTL_S * 1000; }
+}
+function commandOut(c) {
+  const age = Math.floor((nowMs() - c.created_ms) / 1000);
+  return { id: c.id, type: c.type, age_seconds: age, expires_in_seconds: Math.max(0, COMMAND_TTL_S - age) };
+}
+function commandView(c) { // para /__mock
+  const iso = (ms) => (ms ? spInstant(new Date(ms)) : null);
+  return { id: c.id, device_id: c.device_id, type: c.type, state: c.state, created_at: iso(c.created_ms),
+    claimed_at: iso(c.claimed_ms), closed_at: iso(c.closed_ms), error: c.error ?? null, fail_claim: c.fail_claim ?? null };
+}
+// Ordem nunca sai de cache (§8.2).
+const NO_STORE = { 'Cache-Control': 'private, no-store', Vary: 'Authorization, Origin' };
+const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+
 const MESSAGES = {
   invalid_request: 'Requisição inválida.',
   invalid_code: 'Código de enrolamento não encontrado. Confira com o administrador.',
@@ -46,11 +70,13 @@ const MESSAGES = {
   rate_limited: 'Muitas tentativas. Aguarde um instante.',
   unavailable: 'Ápice Hub indisponível no momento.',
   not_found: 'Rota não encontrada.',
+  command_gone: 'Esta ordem não está mais disponível.',
+  forbidden: 'Só do próprio computador do mock.',
 };
 const STATUS = {
   invalid_request: 400, invalid_code: 400, code_expired: 410, code_used: 409, unauthorized: 401,
   token_revoked: 401, excluded_account: 403, person_not_mapped: 409, upgrade_required: 426,
-  rate_limited: 429, unavailable: 503, not_found: 404,
+  rate_limited: 429, unavailable: 503, not_found: 404, command_gone: 409, forbidden: 403,
 };
 const RETRY = { person_not_mapped: 3600, rate_limited: 30, unavailable: 60 };
 
@@ -87,11 +113,11 @@ function auth(req, res) {
   const m = /^Bearer (\S+)$/.exec(req.headers.authorization || '');
   if (!m) { fail(res, 'unauthorized'); return null; }
   const known = issued.get(sha256(m[1]));
-  if (known) return { token: m[1], key: known.person };
+  if (known) return { token: m[1], key: known.person, device: known.device_id };
   const t = TOKENS[m[1]];
   if (!t) { fail(res, 'unauthorized'); return null; }
   if (t.kind !== 'ok') { fail(res, t.kind); return null; }
-  return { token: m[1], key: t.person };
+  return { token: m[1], key: t.person, device: 'dev_mock_' + t.person };
 }
 
 function personOut(p) {
@@ -157,6 +183,7 @@ function configBody(key) {
     sync_times: ROBOT_RUNS.map((h) => `${String(h).padStart(2, '0')}:00`),
     poll_interval_seconds: 600,
     heartbeat_interval_seconds: 900,
+    commands_poll_interval_seconds: 60,
     notice: p.stale ? { level: 'warn', text: 'A sincronização com o Gestta está atrasada. Os dados podem não refletir baixas recentes.' } : null,
     update: { min_agent_version: '0.1.0', force: false },
   };
@@ -202,16 +229,81 @@ const routes = {
     const body = await readJson(req);
     if (!body || typeof body.agent_version !== 'string') return fail(res, 'invalid_request');
     heartbeats.set(a.key, { ...body, _received: spInstant(now()) });
+    // §8.5: fecha como executed se a ordem foi reivindicada por este dispositivo e o Windows ligou depois.
+    const c = typeof body.last_command_id === 'string' && commands.get(body.last_command_id);
+    if (c && c.device_id === a.device && c.state === 'claimed' && Number.isFinite(body.uptime_seconds)
+        && body.uptime_seconds * 1000 < nowMs() - c.claimed_ms) { c.state = 'executed'; c.closed_ms = nowMs(); }
     send(res, 200, { api: API, received_at: spInstant(now()), config_version: CONFIG_VERSION }, PRIVATE);
   },
 
+  'GET /api/gestor/me/commands': (req, res) => {
+    const a = auth(req, res); if (!a) return;
+    expireStale();
+    const list = [...commands.values()].filter((c) => c.device_id === a.device && c.state === 'pending')
+      .sort((x, y) => x.created_ms - y.created_ms).map(commandOut);
+    send(res, 200, { api: API, commands: list }, NO_STORE);
+  },
+
   // Só do mock: inspeção rápida. Não existe no contrato.
-  'GET /__mock': (req, res) => send(res, 200, {
+  'GET /__mock': (req, res) => { expireStale(); send(res, 200, {
     tokens: Object.keys(TOKENS), codes: Object.keys(CODES),
     enrolled: [...issued.values()], // sem token: só pessoa, dispositivo e hostname
     heartbeats: Object.fromEntries(heartbeats), now: spInstant(now()),
-  }),
+    commands: [...commands.values()].map(commandView),
+  }); },
+
+  // Admin do mock (faz o papel de /admin/maquinas). SÓ do próprio Mac: o mock da bancada escuta na
+  // rede, e ninguém da rede pode mandar desligar o PC do Vinny por aqui.
+  //   POST /__mock/commands {device_id, type?, age_seconds?, fail_claim?: 'network'|'server_error'}
+  'POST /__mock/commands': async (req, res) => {
+    if (!isLoopback(req)) return fail(res, 'forbidden');
+    const b = await readJson(req);
+    if (!b || typeof b.device_id !== 'string') return fail(res, 'invalid_request');
+    const type = b.type ?? 'shutdown';
+    expireStale();
+    // No máximo uma shutdown pendente por dispositivo: pedir de novo devolve a mesma (§8.3).
+    const dup = [...commands.values()].find((c) => c.device_id === b.device_id && c.type === type && c.state === 'pending');
+    if (dup) return send(res, 200, commandView(dup));
+    const c = { id: 'cmd_' + randomBytes(9).toString('base64url'), device_id: b.device_id, type, state: 'pending',
+      created_ms: nowMs() - 1000 * (Number(b.age_seconds) || 0), fail_claim: b.fail_claim ?? null };
+    commands.set(c.id, c);
+    expireStale(); // age_seconds ≥ 300 já nasce vencida
+    send(res, 201, commandView(c));
+  },
+  //   POST /__mock/clock {advance_seconds} — avança o relógio das ordens (vencimento, fechamento)
+  'POST /__mock/clock': async (req, res) => {
+    if (!isLoopback(req)) return fail(res, 'forbidden');
+    const b = await readJson(req);
+    clockOffsetMs += 1000 * (Number(b?.advance_seconds) || 0);
+    send(res, 200, { now: spInstant(new Date(nowMs())), offset_seconds: clockOffsetMs / 1000 });
+  },
 };
+
+// Rotas com id no caminho (§8.2).
+const paramRoutes = [
+  [/^POST \/api\/gestor\/me\/commands\/([^/]+)\/claim$/, async (req, res, id) => {
+    const a = auth(req, res); if (!a) return;
+    expireStale();
+    const c = commands.get(id);
+    if (!c || c.device_id !== a.device || c.state !== 'pending') return send(res, 409,
+      { api: API, error: { code: 'command_gone', message: MESSAGES.command_gone, retry_after_seconds: null } }, NO_STORE);
+    c.state = 'claimed'; c.claimed_ms = nowMs(); // atômico: Node é um laço só, nada entra entre o teste e a escrita
+    if (c.fail_claim === 'network') return req.socket.destroy();  // claim chegou, resposta se perdeu
+    if (c.fail_claim === 'server_error') return send(res, 500,
+      { api: API, error: { code: 'server_error', message: 'Erro no Ápice Hub.', retry_after_seconds: 60 } }, NO_STORE);
+    send(res, 200, { api: API, id: c.id, type: c.type, claimed_at: spInstant(new Date(c.claimed_ms)) }, NO_STORE);
+  }],
+  [/^POST \/api\/gestor\/me\/commands\/([^/]+)\/result$/, async (req, res, id) => {
+    const a = auth(req, res); if (!a) return;
+    const b = await readJson(req);
+    if (!b || b.status !== 'failed' || typeof b.error !== 'string' || b.error.length > 500) return fail(res, 'invalid_request');
+    const c = commands.get(id);
+    if (!c || c.device_id !== a.device || c.state !== 'claimed') return send(res, 409,
+      { api: API, error: { code: 'command_gone', message: MESSAGES.command_gone, retry_after_seconds: null } }, NO_STORE);
+    c.state = 'failed'; c.error = b.error; c.closed_ms = nowMs();
+    send(res, 200, { api: API, id: c.id, state: 'failed' }, NO_STORE);
+  }],
+];
 
 const server = http.createServer(async (req, res) => {
   // CORS aberto: a interface roda em http://localhost:* (navegador) e tauri://localhost (casca).
@@ -222,7 +314,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
 
   const path = req.url.split('?')[0].replace(/\/+$/, '');
-  const handler = routes[`${req.method} ${path}`];
+  let handler = routes[`${req.method} ${path}`];
+  if (!handler) for (const [re, fn] of paramRoutes) {
+    const m = re.exec(`${req.method} ${path}`);
+    if (m) { handler = (q, r) => fn(q, r, decodeURIComponent(m[1])); break; }
+  }
   const t0 = Date.now();
   try {
     if (!handler) fail(res, 'not_found');

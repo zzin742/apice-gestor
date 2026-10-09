@@ -53,3 +53,21 @@ em `src/api/client.js`. `GET /__mock` (fora do contrato, sem autenticação) lis
 | qualquer outro | 400 `invalid_code` |
 
 Os tokens `gdt_mock_*` não são segredo: só existem aqui. Token de verdade nunca entra em repo.
+
+## Ordens ao dispositivo (contrato §8 — proposta)
+
+`GET /api/gestor/me/commands`, `POST …/{id}/claim`, `POST …/{id}/result`, com claim atômico,
+vencimento em 5 min e fechamento `executed` pelo heartbeat (`last_command_id` + `uptime_seconds`).
+O dispositivo de um token de cenário é `dev_mock_<nome>` (ex.: `dev_mock_rafael`); o de um PC
+enrolado aparece em `/__mock` → `enrolled`.
+
+Administração do mock — **só aceita chamada do próprio Mac** (`403` vindo da rede):
+
+```sh
+# mandar desligar (age_seconds envelhece a ordem; fail_claim simula 'network' ou 'server_error' no claim)
+curl -X POST localhost:8787/__mock/commands -H 'Content-Type: application/json' -d '{"device_id":"dev_mock_rafael"}'
+# avançar o relógio das ordens (vencimento, fechamento)
+curl -X POST localhost:8787/__mock/clock -H 'Content-Type: application/json' -d '{"advance_seconds":301}'
+```
+
+Ordens ficam só em memória: reiniciar o mock zera o histórico.

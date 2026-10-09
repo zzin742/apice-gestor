@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, statSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createClient, tabsOf, GestorApiError } from '../src/api/client.js';
+import { createClient, tabsOf, GestorApiError, commandDecision } from '../src/api/client.js';
 import { businessHoursBetween, robotRun, now, spDate } from './data.mjs';
 
 // Funções puras de §3.5, antes de subir o servidor. Datas em São Paulo (−03:00).
@@ -115,6 +115,74 @@ try {
   assert.ok(!raw.includes(e.token) && !raw.includes('gdt_'), 'o arquivo não pode conter o token');
   assert.equal(statSync(file).mode & 0o777, 0o600);
   ok('token do enroll sobrevive a reinício (só SHA-256 em disco, 600)');
+
+  // ---------- Ordens ao dispositivo (§8) ----------
+  const root = base.replace('/api/gestor', '');
+  const admin = async (path, body) => (await fetch(root + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+  const raf = api('gdt_mock_rafael'), bia = api('gdt_mock_bianca');
+  assert.equal((await raf.getConfig()).commands_poll_interval_seconds, 60);
+  assert.deepEqual((await raf.getCommands()).commands, []); ok('me/commands vazio é o normal; config com commands_poll_interval_seconds');
+
+  const c1 = await admin('/__mock/commands', { device_id: 'dev_mock_rafael' });
+  const again1 = await admin('/__mock/commands', { device_id: 'dev_mock_rafael' });
+  assert.equal(again1.id, c1.id); ok('mandar duas vezes = a mesma ordem (aceite 4)');
+  const rc = await fetch(base + '/me/commands', { headers: { Authorization: 'Bearer gdt_mock_rafael' } });
+  assert.match(rc.headers.get('Cache-Control'), /no-store/); assert.equal(rc.headers.get('ETag'), null);
+  const listed = (await rc.json()).commands;
+  assert.equal(listed.length, 1); assert.equal(listed[0].type, 'shutdown');
+  assert.ok(listed[0].age_seconds >= 0 && listed[0].expires_in_seconds <= 300);
+  assert.deepEqual((await bia.getCommands()).commands, []); // ordem é por dispositivo
+  await expectErr(bia.claimCommand(c1.id), 'command_gone');
+  ok('ordem só aparece e só é reivindicável pelo próprio dispositivo; no-store, sem ETag');
+
+  const cl = await raf.claimCommand(c1.id); assert.equal(cl.id, c1.id);
+  await expectErr(raf.claimCommand(c1.id), 'command_gone');
+  assert.deepEqual((await raf.getCommands()).commands, []);
+  ok('claim atômico: 200 uma vez, depois 409 command_gone');
+
+  // Heartbeat fecha como executed só se o Windows ligou depois do claim (§8.5).
+  const hbBase = { agent_version: '0.2.0', os: 'Windows 11', last_command_id: c1.id };
+  await raf.heartbeat({ ...hbBase, uptime_seconds: 9999 });
+  const state = async (id) => (await (await fetch(root + '/__mock')).json()).commands.find((c) => c.id === id).state;
+  assert.equal(await state(c1.id), 'claimed', 'uptime maior que o tempo desde o claim: não fecha');
+  await admin('/__mock/clock', { advance_seconds: 120 });
+  await raf.heartbeat({ ...hbBase, uptime_seconds: 40 });
+  assert.equal(await state(c1.id), 'executed'); ok('heartbeat pós-boot fecha como executed; sem boot, não');
+
+  // Falha: result failed fecha; repetir dá 409.
+  const c2 = await admin('/__mock/commands', { device_id: 'dev_mock_rafael' });
+  await raf.claimCommand(c2.id);
+  assert.equal((await raf.reportCommandFailed(c2.id, 'shutdown.exe 1190')).state, 'failed');
+  await expectErr(raf.reportCommandFailed(c2.id, 'de novo'), 'command_gone');
+  await expectErr(raf.reportCommandFailed('cmd_naoexiste', 'x'), 'command_gone');
+  ok('result failed fecha a ordem uma vez');
+
+  // Vencimento: 5 min sem claim, nunca mais entregue (aceite 3).
+  const c3 = await admin('/__mock/commands', { device_id: 'dev_mock_rafael' });
+  await admin('/__mock/clock', { advance_seconds: 301 });
+  assert.deepEqual((await raf.getCommands()).commands, []);
+  await expectErr(raf.claimCommand(c3.id), 'command_gone');
+  assert.equal(await state(c3.id), 'expired');
+  const c4 = await admin('/__mock/commands', { device_id: 'dev_mock_rafael', age_seconds: 400 });
+  assert.equal(c4.state, 'expired'); ok('ordem vence em 5 min e o claim também respeita');
+
+  // Rede caída no claim (aceite 5): o claim chega, a resposta se perde → cliente rejeita, ordem não volta.
+  const c5 = await admin('/__mock/commands', { device_id: 'dev_mock_rafael', fail_claim: 'network' });
+  await expectErr(raf.claimCommand(c5.id), 'network');
+  assert.deepEqual((await raf.getCommands()).commands, []); assert.equal(await state(c5.id), 'claimed');
+  const c6 = await admin('/__mock/commands', { device_id: 'dev_mock_rafael', fail_claim: 'server_error' });
+  await expectErr(raf.claimCommand(c6.id), 'server_error');
+  ok('claim sem 200 (rede/500) rejeita e a ordem não é reentregue');
+
+  // Travas antes do claim (§8.6): função pura do cliente.
+  const executed = new Set(['cmd_ja']);
+  const decide = (cmd, up) => commandDecision({ type: 'shutdown', age_seconds: 10, ...cmd }, { processUptimeSeconds: up, executedIds: executed });
+  assert.equal(decide({ id: 'cmd_ok' }, 60), 'claim');
+  assert.equal(decide({ id: 'cmd_velha', age_seconds: 200 }, 60), 'ignore:before_start');   // trava b: ligou o PC depois da ordem
+  assert.equal(decide({ id: 'cmd_ja' }, 60), 'ignore:already_executed');                    // trava c
+  assert.equal(decide({ id: 'cmd_x', type: 'reboot' }, 60), 'ignore:unknown_type');
+  assert.equal(decide({ id: 'cmd_nan', age_seconds: undefined }, 60), 'ignore:before_start');
+  ok('travas b e c e tipo desconhecido (commandDecision)');
 
   // Virada do dia sem sync (§3 ETag, §3.1): mesma carteira, buckets novos, ETag diferente.
   const before = api('gdt_mock_rafael'), dayEnd = await before.getTasks();

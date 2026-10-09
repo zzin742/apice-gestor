@@ -13,6 +13,7 @@ qualquer dado novo que a interface precisar vira campo novo aqui, combinado com 
 | `GET  /api/gestor/me/tasks` | token de dispositivo | tarefas da pessoa, já resolvidas em Hoje / Semana / Todas |
 | `GET  /api/gestor/me/config` | token de dispositivo | flags e parâmetros que o agente obedece |
 | `POST /api/gestor/heartbeat` | token de dispositivo | telemetria do agente |
+| `GET  /api/gestor/me/commands` · `POST …/{id}/claim` · `POST …/{id}/result` | token de dispositivo | ordens ao dispositivo (desligar o PC) — **proposta, §8** |
 
 ---
 
@@ -80,6 +81,7 @@ Todo erro tem o mesmo corpo:
 | 401 | `token_revoked` | admin revogou o dispositivo | apaga o token, volta ao enrolamento |
 | 403 | `excluded_account` | a pessoa do dispositivo é conta-caixa (lista "contas que não são pessoa") | mostra a mensagem; não busca tarefas |
 | 409 | `person_not_mapped` | dispositivo existe mas o de-para pessoa → nome no Gestta não está feito | mostra "aguardando configuração" e tenta de novo em `retry_after_seconds` |
+| 409 | `command_gone` | ordem já reivindicada, vencida, cancelada ou de outro dispositivo (§8) | **não executa**; não repete |
 | 426 | `upgrade_required` | versão do agente/API abaixo do mínimo | força o updater |
 | 429 | `rate_limited` | chamadas demais | espera **no mínimo** `retry_after_seconds` |
 | 503 | `unavailable` | Hub ou banco dos robôs fora | mantém o último dado, marca a cápsula como sem conexão, tenta de novo |
@@ -318,6 +320,7 @@ mudou (`config_version`) e, no mínimo, a cada hora. Suporta `ETag`/`304`.
 | `sync_times` | horários das rodadas do robô (`HH:MM`, São Paulo), cadastrados na administração do Hub. A interface monta o rodapé a partir dele (`length` → "4×/DIA"), sem número fixo no HTML. Lista vazia = horário desconhecido: o rodapé não fala de cadência. Informativo: não entra na conta de `stale`. O agente **pode** buscar `me/tasks` alguns minutos depois de cada horário, **além** do `poll_interval_seconds`, nunca no lugar dele: a virada do dia e a passagem para "velho" acontecem sem sync |
 | `poll_interval_seconds` | intervalo de `GET me/tasks` (mínimo aceito pelo agente: 60) |
 | `heartbeat_interval_seconds` | intervalo do heartbeat (mínimo: 300) |
+| `commands_poll_interval_seconds` | intervalo de `GET me/commands`; `0` = desligado. **Proposta, §8.4** |
 | `notice` | `null` ou `{ "level": "info"\|"warn", "text": "…" }` — faixa no topo do cartão |
 | `update.min_agent_version` | abaixo disso o agente força o updater; `force: true` força mesmo acima |
 
@@ -338,9 +341,13 @@ Telemetria. **Só isto** — nada de tela, teclado, aplicativo ou janela (Arquit
   "last_tasks_ok_at": "2026-10-08T13:02:11-03:00",
   "panel_opens_since_last": 2,
   "morning_shown_at": "2026-10-08T08:03:12-03:00",
-  "last_error_code": null
+  "last_error_code": null,
+  "last_command_id": null,
+  "uptime_seconds": 5312
 }
 ```
+
+`last_command_id` e `uptime_seconds`: **proposta, §8.5**. O agente 0.1.0 não manda; o Hub aceita sem.
 
 - `panel_opens_since_last`: quantas vezes o cartão foi aberto pelo usuário desde o último heartbeat
   (alimenta "quem nunca abriu o painel").
@@ -384,3 +391,175 @@ precedência pelo departamento da pessoa (§4), `department` de `empresa_departa
 `npm run mock` (ou `node mock/server.mjs`) sobe o contrato inteiro em `http://127.0.0.1:8787`, com
 dados fictícios no tamanho dos números reais (§4 da Arquitetura). Tokens, códigos e cenários estão em
 `mock/README.md`. `npm run mock:smoke` confere todas as rotas.
+
+---
+
+## 8. Ordens ao dispositivo — desligar o PC pelo Hub
+
+> **Proposta** (Ponte, 09/10/2026), a partir de `~/dev/Jarvis/PROJETOS/Apice-Hub/Logs/2026-10-09-pedido-gestor-desligar-pc.md`.
+> Desenho com "manda bala" do José Luiz; **contrato aguardando a aprovação dele**, depois vai ao Farol
+> e libera o Chassi. Muda o escopo da Arquitetura (§1 e §5 diziam que o agente não controla a
+> máquina) — o registro lá é do Vigia.
+
+**Mudança compatível:** rotas e campos novos, `X-Gestor-Api: 1` continua. O agente 0.1.0 ignora
+`commands_poll_interval_seconds` e nunca chama as rotas novas.
+
+### 8.1 Por que existe e o que não pode voltar
+
+O Hub Desktop desliga só os PCs que estão com ele aberto (38 de 98 em 09/10); o Ápice Gestor vai estar
+em todos. **O laço de junho/2026 não pode voltar:** o `shutdown /t 0` apagava o PC antes de a
+confirmação chegar ao servidor, a ordem continuava pendente e o PC do Vinny desligava de novo a cada
+vez que o app abria. Aqui a ordem **só é executada depois de reivindicada no servidor**, uma vez, e
+nenhuma resposta incerta leva a desligar.
+
+### 8.2 Rotas
+
+| Rota | Função |
+|---|---|
+| `GET  /api/gestor/me/commands` | ordens pendentes e não vencidas **deste dispositivo** |
+| `POST /api/gestor/me/commands/{id}/claim` | reivindica a ordem, de forma atômica; só `200` autoriza executar |
+| `POST /api/gestor/me/commands/{id}/result` | avisa que a execução **falhou** (o PC continuou ligado) |
+
+Todas com o token de dispositivo (§1.2). **A ordem é por dispositivo, nunca por pessoa:** no piloto,
+o PC do Vinny está vinculado ao José — por pessoa, desligaria o PC errado. O dispositivo é o do token.
+
+Cabeçalhos: como §1.3, mas **sem ETag e com `Cache-Control: private, no-store`** em todas as
+respostas destas rotas (ordem nunca sai de cache) e `Vary: Authorization`.
+
+#### `GET /api/gestor/me/commands`
+
+Chamada a cada `commands_poll_interval_seconds` (§8.4). Lista vazia é o caso normal.
+
+```json
+{ "api": 1, "commands": [ { "id": "cmd_01JB…", "type": "shutdown", "age_seconds": 12, "expires_in_seconds": 288 } ] }
+```
+
+| Campo | Nota |
+|---|---|
+| `id` | opaco, `cmd_` + texto; único para sempre (não reaproveitar) |
+| `type` | `shutdown` na v1. Tipo desconhecido: o agente **ignora** (não reivindica) |
+| `age_seconds` | idade da ordem **pelo relógio do servidor**, no instante da resposta. O agente nunca usa o relógio do PC |
+| `expires_in_seconds` | quanto falta para vencer (§8.3) |
+
+Só entram ordens `pending` e não vencidas, deste dispositivo, da mais velha para a mais nova.
+
+#### `POST /api/gestor/me/commands/{id}/claim`
+
+Corpo vazio (`{}`). Transição atômica `pending → claimed`, uma vez só (no Hub: `UPDATE … WHERE id = $1
+AND device_id = $2 AND state = 'pending' AND created_at > now() - interval '5 min' RETURNING …`).
+
+- **`200`** `{ "api": 1, "id": "cmd_…", "type": "shutdown", "claimed_at": "2026-10-09T14:02:11-03:00" }`
+  → **pode executar.**
+- **`409 command_gone`** → já reivindicada, vencida, cancelada, de outro dispositivo ou inexistente
+  (o Hub não distingue, para não vazar ordem de outra máquina) → **não executa.**
+- Qualquer outra coisa (rede, timeout, `5xx`, `401`, corpo ilegível) → **não executa** e **não tenta
+  de novo** (trava a). Se o claim chegou ao Hub e a resposta se perdeu, a ordem fica `claimed` e nunca
+  mais é entregue: o admin vê "reivindicada, sem confirmação" e manda outra se quiser.
+
+#### `POST /api/gestor/me/commands/{id}/result`
+
+Só para **falha**: o agente rodou a sequência de desligamento e continua vivo.
+
+```json
+{ "status": "failed", "error": "shutdown.exe 1190; Stop-Computer: acesso negado; WMI 5: código 1191" }
+```
+
+- `status`: só `failed` na v1. `error`: texto curto, até 500 caracteres, **sem token nem dado pessoal**.
+- `200` `{ "api": 1, "id": "cmd_…", "state": "failed" }`. `409 command_gone` se a ordem não está
+  `claimed` por este dispositivo. `400 invalid_request` se o corpo não bate.
+- **Sucesso não se avisa** (o PC apagou): fecha-se pelo heartbeat (§8.5).
+
+### 8.3 Estados da ordem (no Hub)
+
+```
+pending ──claim──▶ claimed ──heartbeat pós-boot──▶ executed
+   │                  └──result failed──────────▶ failed
+   ├──5 min sem claim──▶ expired
+   └──admin cancela────▶ canceled
+```
+
+- **Vence em 5 minutos** sem claim e **nunca mais é entregue** (PC desligado ou sem rede quando o
+  admin mandou). O vencimento é checado também dentro do `claim`, não só na listagem.
+- **No máximo uma `shutdown` pendente por dispositivo:** pedir de novo enquanto há uma pendente devolve
+  a mesma ordem (não cria outra). "Mandar duas vezes" desliga uma vez só.
+- `claimed` sem fechamento em 24 h → o admin vê "sem confirmação". Nunca volta para `pending`.
+- `executed`, `failed`, `expired`, `canceled` são finais.
+
+### 8.4 Campo novo em `me/config`
+
+| Campo | Efeito |
+|---|---|
+| `commands_poll_interval_seconds` | intervalo de `GET me/commands`. Proposta: **60**. **`0` = desligado**: o agente não consulta ordens. Mínimo aceito pelo agente quando ligado: 30 |
+
+Independe de `paused`: dispositivo pausado continua recebendo ordem (pausa esconde a cápsula, não tira
+a máquina da administração). Para tirar, o admin põe `0`.
+
+### 8.5 Campos novos no heartbeat
+
+| Campo | Nota |
+|---|---|
+| `last_command_id` | id da última ordem que este dispositivo **executou** (gravada antes de desligar, trava c), ou `null` |
+| `uptime_seconds` | tempo ligado do Windows (`GetTickCount64() / 1000`), inteiro |
+
+**Fechamento como `executed`:** o Hub marca `executed` quando recebe um heartbeat deste dispositivo com
+`last_command_id` = uma ordem `claimed` **e** `uptime_seconds < agora − claimed_at` (o Windows foi
+ligado depois do claim, então desligou mesmo). Sem a segunda condição, um PC que falhou em desligar e
+não conseguiu mandar o `result` seria registrado como desligado. Nosso desligamento é completo
+(`shutdown /s`, sem `/hybrid`), então o uptime zera.
+
+### 8.6 Regras do agente — as quatro travas contra o laço
+
+São regras de **cliente**: o Hub não tem como garanti-las. Valem desde o primeiro segundo da
+execução — com o início automático, toda ligada do PC abre o Gestor.
+
+- **(a) Só executa com `claim` = `200` nesta execução do app.** Erro de rede, `409` ou qualquer outra
+  resposta → não executa e não fica tentando. Claim de uma execução anterior não vale.
+- **(b) Ordem anterior ao início desta execução é ignorada:** se `age_seconds` > tempo desde que **este
+  processo** começou (relógio monotônico do processo, ex.: `Instant` no Rust), a ordem é velha → não
+  reivindica e não executa. Compara duração com duração; não depende do relógio do PC.
+  *Ajuste da Ponte ao desenho, que comparava com o uptime do Windows:* com a **Inicialização
+  Rápida** (padrão do Windows 10/11), desligar pelo menu Iniciar hiberna o kernel e o uptime pode não
+  zerar — uma ordem criada com o PC "desligado" passaria pela trava. O tempo do processo é sempre ≤ o
+  uptime, então a regra fica mais estrita, nunca mais frouxa. Custo: uma ordem que chega enquanto o
+  app reinicia (atualização) é ignorada; o admin manda de novo. **A confirmar na bancada** (aceite 7).
+- **(c) Grava o `id` localmente ANTES de desligar** (arquivo no AppData do usuário, ex.:
+  `%APPDATA%\ApiceGestor\commands.json`, com escrita atômica). Id já gravado **nunca** é executado de
+  novo, mesmo que reapareça. Se a gravação falhar → não executa e manda `result failed`.
+- **(d) Uma tentativa por ordem:** `shutdown /s /f /t 0 /c "Apice Gestor: admin requisitou desligar"`
+  → se falhar, `Stop-Computer -Force` → se falhar, WMI `Win32Shutdown(5)`. Uma vez cada, sem laço,
+  usuário comum, sem aviso na tela (decisão do José Luiz). Se o processo ainda estiver vivo **60 s**
+  depois da última tentativa, manda `result failed` com o motivo.
+
+Ordem de operações para cada ordem recebida:
+
+```
+type == shutdown?  ──não──▶ ignora
+id já em commands.json? ──sim──▶ ignora
+age_seconds > uptime do processo? ──sim──▶ ignora            (trava b)
+POST claim ── ≠ 200 ──▶ não executa, não repete               (trava a)
+grava id em commands.json ── falhou ──▶ result failed, fim    (trava c)
+shutdown.exe → Stop-Computer → WMI, uma vez                   (trava d)
+vivo 60 s depois? ──▶ result failed
+```
+
+No máximo **uma** ordem de desligar por consulta. Token nunca em log; o `id` da ordem pode ir para o
+log.
+
+### 8.7 Critérios de aceite (bancada, com o José Luiz presente)
+
+1. Admin manda desligar → o PC apaga em até ~1 min, sem aviso.
+2. Ligar de novo e abrir o Gestor → **não** desliga (repetir 3 vezes).
+3. PC desligado quando a ordem foi criada, ligado 10 min depois → não desliga; histórico "vencida".
+4. Ordem mandada duas vezes seguidas → desliga uma vez só.
+5. Rede caída na hora do claim → não desliga.
+6. Desligar e ligar sem abrir nada → o Gestor sobe sozinho (início automático); repetir depois de
+   desativar em Gerenciador de Tarefas → Aplicativos de inicialização e abrir o app uma vez. *(Casca,
+   não contrato.)*
+7. **(novo, da trava b)** Com a Inicialização Rápida **ligada**: desligar o PC pelo menu Iniciar, admin
+   manda a ordem, ligar o PC em até 2 min → **não** desliga.
+8. **(novo)** Bloquear a escrita em `commands.json` → não desliga e o histórico mostra "falhou".
+
+### 8.8 Erros
+
+Padrão do §1.4. Código novo: `409 command_gone` — "Esta ordem não está mais disponível." O agente não
+mostra ao usuário; só registra.
