@@ -55,18 +55,16 @@ pub fn gravar(token: &str) -> Result<(), ErroCofre> {
     // Nunca escreve por cima de um temp pré-existente (de outro dono): create_new falha se existir,
     // então o token não cai num arquivo que outro usuário leia (B1b). Na dúvida, Falha.
     let _ = std::fs::remove_file(&temp);
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)
-        .map_err(|e| ErroCofre::Falha(format!("temp: {e}")))?;
-    f.write_all(&bytes).map_err(|e| ErroCofre::Falha(e.to_string()))?;
+    let mut opcoes = std::fs::OpenOptions::new();
+    opcoes.write(true).create_new(true);
+    // Dev no Mac: sem DPAPI nem ACL; nasce 0600 já no open, não legível por outros (B3/N3).
     #[cfg(not(windows))]
     {
-        // Dev no Mac: sem DPAPI nem ACL; ao menos 0600 para não ficar legível por outros (B3).
-        use std::os::unix::fs::PermissionsExt;
-        let _ = f.set_permissions(std::fs::Permissions::from_mode(0o600));
+        use std::os::unix::fs::OpenOptionsExt;
+        opcoes.mode(0o600);
     }
+    let mut f = opcoes.open(&temp).map_err(|e| ErroCofre::Falha(format!("temp: {e}")))?;
+    f.write_all(&bytes).map_err(|e| ErroCofre::Falha(e.to_string()))?;
     f.sync_all().map_err(|e| ErroCofre::Falha(e.to_string()))?;
     drop(f);
 
@@ -98,8 +96,6 @@ pub fn apagar() {
 
 // ----- Windows: DPAPI de máquina + ACL -----
 
-/// Herança desligada e só SYSTEM (S-1-5-18) e Administradores (S-1-5-32-544). SID em vez do nome,
-/// que é localizado ("Administradores" em pt-BR). `icacls` existe em toda instalação; roda elevado.
 #[cfg(windows)]
 /// Herança desligada, dono = SYSTEM, e só SYSTEM (S-1-5-18) e Administradores (S-1-5-32-544).
 /// SID em vez do nome (localizado). `arquivo`=false aplica a herança de contêiner na pasta (OI)(CI);
@@ -111,9 +107,14 @@ fn fechar_acl(alvo: &std::path::Path, arquivo: bool) -> Result<(), ErroCofre> {
     let raiz = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     let icacls = format!(r"{raiz}\System32\icacls.exe");
     let heranca = if arquivo { "F" } else { "(OI)(CI)F" };
-    let saida = Command::new(icacls)
-        .arg(alvo)
-        .args(["/setowner", "*S-1-5-18", "/T", "/C"])
+    let mut cmd = Command::new(icacls);
+    cmd.arg(alvo).args(["/setowner", "*S-1-5-18"]);
+    if !arquivo {
+        // Num objeto único o /T não faz nada; na pasta recai no conteúdo. Sem /C: se o icacls
+        // tropeçar em algo plantado dentro, melhor Falha do que seguir mascarando o erro.
+        cmd.arg("/T");
+    }
+    let saida = cmd
         .args(["/inheritance:r"])
         .args(["/grant:r", &format!("*S-1-5-18:{heranca}")])
         .args(["/grant:r", &format!("*S-1-5-32-544:{heranca}")])

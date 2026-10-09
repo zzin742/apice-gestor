@@ -277,7 +277,12 @@ pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
         .get("token")
         .and_then(Value::as_str)
         .ok_or_else(|| ErroApi::novo("server_error", "O Ápice Hub não devolveu o token."))?;
-    crate::cofre::gravar(token).map_err(erro_cofre)?;
+    crate::cofre::gravar(token).map_err(|_| {
+        ErroApi::novo(
+            "server_error",
+            "Não foi possível proteger o cofre; execute o enrolamento como administrador.",
+        )
+    })?;
     let pessoa = |campo: &str| {
         corpo["person"].get(campo).and_then(Value::as_str).unwrap_or("").to_owned()
     };
@@ -349,10 +354,7 @@ fn erro_cofre(e: crate::cofre::ErroCofre) -> ErroApi {
 }
 
 fn falha_cofre() -> ErroApi {
-    ErroApi::novo(
-        "server_error",
-        "Não foi possível proteger o cofre de credenciais; execute o enrolamento como administrador.",
-    )
+    ErroApi::novo("server_error", "Não foi possível usar o cofre de credenciais da máquina.")
 }
 
 fn ler_token() -> Result<String, ErroApi> {
