@@ -1,0 +1,10 @@
+[package]
+name = "apice-gestor-servico"
+version = "0.1.0"
+description = "Ápice Gestor — serviço do Windows"
+edition = "2021"
+
+[dependencies]
+# Reaproveita a lib da casca (api, cofre, comandos, bloqueio, servico…). O crate do Tauri NÃO
+# empacota este binário (ele está fora dos [[bin]] da casca); quem o empacota é o servico.wxs.
+apice-gestor = { path = ".." }
