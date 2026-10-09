@@ -25,7 +25,7 @@
   <Fragment>
     <DirectoryRef Id="INSTALLDIR">
       <!-- GUID fixo: nunca trocar (o Windows Installer usa para reconhecer o componente em upgrades). -->
-      <Component Id="ApiceGestorServico" Guid="{CF0434A1-A5D2-4C04-AD81-DEFEB6F6BE83}" Win64="$(var.Win64)">
+      <Component Id="ApiceGestorServico" Guid="{CF0434A1-A5D2-4C04-AD81-DEFEB6F6BE83}">
         <!-- O light.exe do Tauri roda em target\release\wix\<arch>, então o binário está dois níveis
              acima. (O -dSourceDir do Tauri é o caminho do .exe principal, não uma pasta.) -->
         <File Id="ApiceGestorServicoExe" Source="..\..\apice-gestor-servico.exe" KeyPath="yes" Checksum="yes" />
