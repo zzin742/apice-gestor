@@ -21,11 +21,11 @@ reqwest = { version = "0.13", default-features = false, features = ["native-tls"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
 tauri-plugin-notification = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "net", "io-util"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8.1"
-windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_Registry", "Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_Security_Cryptography", "Win32_System_Diagnostics_ToolHelp"] }
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_System_Console", "Win32_System_Registry", "Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_System_Diagnostics_ToolHelp"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2"

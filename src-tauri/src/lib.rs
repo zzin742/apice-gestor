@@ -5,6 +5,7 @@ mod cofre;
 mod comandos;
 mod desligar;
 mod enrolar;
+mod ipc;
 mod janela;
 mod servico;
 
