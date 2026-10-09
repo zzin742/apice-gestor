@@ -71,6 +71,9 @@ $NomeApp         = [char]0x00C1 + 'pice Gestor'                       # "Ápice 
 $PastaApp        = Join-Path $env:ProgramFiles $NomeApp
 $Exe             = Join-Path $PastaApp 'apice-gestor.exe'
 $Processo        = 'apice-gestor'
+# Serviço do Windows (demanda de bloqueio, opção B, 09/10). Quem cria/remove é o .msi (fragmento
+# WiX); o script confere. Builds sem serviço (os do piloto até aqui) seguem o caminho antigo.
+$Servico         = 'ApiceGestor'
 $KeychainServico = 'br.com.apice.gestor'                              # alvo no Credential Manager
 $WebView2Id      = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
 $WebView2Url     = 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' # Evergreen Bootstrapper
@@ -168,8 +171,77 @@ function AlvosDoToken {
 
 function JaEnrolado { return [bool](AlvosDoToken) }
 
+# O .msi traz serviço? Lê a tabela ServiceInstall do próprio pacote (ausente = não traz).
+function MsiTemServico([string]$caminho) {
+    try {
+        $wi = New-Object -ComObject WindowsInstaller.Installer
+        $db = Com $wi 'OpenDatabase' 'InvokeMethod' @($caminho, 0)
+        $view = Com $db 'OpenView' 'InvokeMethod' @("SELECT Name FROM ServiceInstall WHERE Name='$Servico'")
+        Com $view 'Execute' 'InvokeMethod' $null | Out-Null
+        $rec = Com $view 'Fetch' 'InvokeMethod' $null
+        Com $view 'Close' 'InvokeMethod' $null | Out-Null
+        return ($null -ne $rec)
+    } catch {
+        return $false   # sem a tabela ServiceInstall
+    }
+}
+
+function InfoServico {
+    return Get-CimInstance Win32_Service -Filter "Name='$Servico'" -ErrorAction SilentlyContinue
+}
+
+# Confere o serviço que o .msi instalou: Automático, LocalSystem, rodando, recuperação ligada.
+function ConferirServico {
+    $svc = InfoServico
+    if (-not $svc) { throw "O .msi traz o serviço $Servico, mas ele não foi criado. Veja o log do msiexec em $PastaLog." }
+    if ($svc.StartMode -ne 'Auto') {
+        Set-Service -Name $Servico -StartupType Automatic
+        Escrever "Serviço: início ajustado para Automático (estava $($svc.StartMode))." 'Yellow'
+    }
+    if ($svc.StartName -ne 'LocalSystem') { throw "Serviço: conta $($svc.StartName), esperado LocalSystem. Não sigo." }
+
+    # Recuperação também para saída com erro (o WiX só cobre a queda). sc.exe é idempotente.
+    & sc.exe failureflag $Servico 1 | Out-Null
+    $falhas = (& sc.exe qfailure $Servico | Out-String)
+    if ($falhas -notmatch 'RESTART') {
+        & sc.exe failure $Servico reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
+        Escrever 'Serviço: recuperação configurada (reinicia em 1 min).' 'Yellow'
+    }
+
+    if ((Get-Service -Name $Servico).Status -ne 'Running') { Start-Service -Name $Servico -ErrorAction SilentlyContinue }
+    try {
+        (Get-Service -Name $Servico).WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+    } catch {
+        throw "Serviço $Servico não ficou rodando em 30 s. Veja o Visualizador de Eventos (Sistema, origem Service Control Manager)."
+    }
+    Escrever "Serviço: $Servico rodando (Automático, LocalSystem)." 'Green'
+}
+
+# Serviço que sobrou depois do msiexec /x (MSI antigo, falha no meio): para e apaga.
+function RemoverServicoOrfao {
+    $svc = InfoServico
+    if (-not $svc) { return }
+    Escrever "Serviço: $Servico ainda existe depois de desinstalar; removendo." 'Yellow'
+    Stop-Service -Name $Servico -Force -ErrorAction SilentlyContinue
+    try { (Get-Service -Name $Servico).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)) } catch { Write-Verbose 'não parou em 30 s' }
+    if ($svc.ProcessId) { Stop-Process -Id $svc.ProcessId -Force -ErrorAction SilentlyContinue }
+    $saida = (& sc.exe delete $Servico | Out-String)
+    if ($LASTEXITCODE -eq 1072 -or $saida -match '1072') {
+        Escrever 'Serviço: marcado para exclusão; some depois de reiniciar o PC.' 'Yellow'
+    } elseif (InfoServico) {
+        throw "Não consegui remover o serviço $Servico (sc delete: $($saida.Trim()))."
+    } else {
+        Escrever "Serviço: $Servico removido." 'Green'
+    }
+}
+
 function PararApp {
-    $abertos = @(Get-Process -Name $Processo -ErrorAction SilentlyContinue)
+    # Fecha a cápsula em todas as sessões, mas nunca o processo do serviço: o MSI para o serviço do
+    # jeito certo, e matar o processo faria o Windows reiniciá-lo (recuperação) no meio da instalação.
+    $pidServico = $null
+    $svc = InfoServico
+    if ($svc) { $pidServico = $svc.ProcessId }
+    $abertos = @(Get-Process -Name $Processo -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $pidServico })
     if ($abertos) {
         $abertos | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 1
@@ -250,6 +322,7 @@ function EtapaMaquina([string]$msi) {
         }
     }
     if (-not (Test-Path $Exe)) { throw "Executável não encontrado em $Exe depois da instalação." }
+    if (MsiTemServico $msi) { ConferirServico }
 
 }
 
@@ -274,6 +347,9 @@ function EtapaRemocao {
             default { throw "msiexec /x falhou com código $($p.ExitCode). Log: $logMsi" }
         }
     }
+
+    RemoverServicoOrfao
+    PararApp   # cápsula que tenha sobrado em outra sessão
 
     try {
         if (@((Get-MpPreference).ExclusionPath) -contains $PastaApp) {
@@ -478,7 +554,11 @@ if (EhAdmin) {
 }
 
 # Início automático e token são da conta da sessão: nunca gravar na conta da TI.
-if (SessaoEhDesteUsuario -Calado) {
+if (InfoServico) {
+    # Com o serviço, é ele que abre a cápsula em cada sessão: o Run vira legado e sai.
+    if (SessaoEhDesteUsuario -Calado) { RemoverAutostartDoUsuario }
+    Escrever 'Início automático: feito pelo serviço do Windows.'
+} elseif (SessaoEhDesteUsuario -Calado) {
     RegistrarAutostartDoUsuario
 } else {
     Escrever 'Início automático: NÃO registrado (este PowerShell não é o do colaborador). Rode o script de novo na conta dele.' 'Yellow'

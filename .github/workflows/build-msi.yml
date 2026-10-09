@@ -163,8 +163,13 @@ jobs:
           if ($null -eq (Get-Item $apr).GetValue($nome)) { throw 'apagou a marca de desativado do Gerenciador de Tarefas' }
           Remove-ItemProperty -Path $apr -Name $nome
 
+          # 5. Serviço órfão (MSI antigo ou falha no meio): o -Desinstalar tem que apagá-lo, mesmo sem
+          #    app instalado. O binário é qualquer um: o serviço nem chega a iniciar.
+          & sc.exe create ApiceGestor binPath= "C:\Windows\System32\cmd.exe /c exit" start= demand | Out-Null
+          if (-not (Get-Service ApiceGestor -ErrorAction SilentlyContinue)) { throw 'não consegui criar o serviço de teste' }
           & $s -Desinstalar
           if ($LASTEXITCODE -ne 0) { throw "desinstalar 2x falhou ($LASTEXITCODE)" }
+          if (Get-Service ApiceGestor -ErrorAction SilentlyContinue) { throw 'serviço órfão continua lá' }
           "--- instalar.log ---"; Get-Content $log
 
       - uses: actions/upload-artifact@v6
