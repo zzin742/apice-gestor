@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   RASCUNHO da Esteira (09/10/2026) para o Chassi: o serviço do Windows do Ápice Gestor dentro do .msi.
+  COMBINADO com o Chassi (09/10): dois binários no mesmo crate. apice-gestor.exe = cápsula (webview);
+  apice-gestor-servico.exe = serviço (sem webview, sem Builder da UI nem single-instance). O serviço
+  abre a cápsula em cada sessão com o token do USUÁRIO (nunca SYSTEM) e a reabre se cair; com o
+  serviço presente, a casca para de gravar HKCU\Run. Esqueleto TRAVADO até o José Luiz liberar o
+  token em ProgramData (DPAPI LocalMachine) + enrolamento elevado.
   Demanda de bloqueio de apps, opção B. Plano: Jarvis/PROJETOS/Apice-Gestor/Esteira/Plano-servico-e-assinatura-2026-10-09.md
 
   Como entra no build (config do Tauri, decisão do Chassi):
