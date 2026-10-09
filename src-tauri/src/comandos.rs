@@ -75,17 +75,22 @@ async fn verificar(api: &Api, data_dir: &Path) {
     if !api.claim(id).await {
         return;
     }
+    crate::diario::registrar(&format!("ordem {id} reivindicada"));
     // (c) grava o id ANTES de desligar; se a gravação falhar, não desliga e avisa.
     if let Err(e) = executados.registrar(id) {
+        crate::diario::registrar(&format!("ordem {id} abortada: falha ao gravar o id"));
         api.result_falhou(id, &format!("falha ao gravar o id antes de desligar: {e}")).await;
         return;
     }
+    crate::diario::registrar(&format!("ordem {id} executada (desligando)"));
     // (d) uma tentativa da sequência; se falhar de cara, avisa já.
     if let Err(motivo) = desligar::desligar() {
+        crate::diario::registrar(&format!("ordem {id} falhou no desligar"));
         api.result_falhou(id, &motivo).await;
         return;
     }
     // Deu certo: o PC apaga durante a espera e este processo morre. Se ainda estamos vivos, falhou.
     tokio::time::sleep(ESPERA_DESLIGAR).await;
+    crate::diario::registrar(&format!("ordem {id} seguiu viva 60 s (falhou)"));
     api.result_falhou(id, "o processo seguiu vivo 60 s após o comando de desligar").await;
 }

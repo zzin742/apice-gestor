@@ -8,6 +8,8 @@ mod cofre;
 mod comandos;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod desligar;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod diario;
 mod enrolar;
 mod ipc;
 mod janela;

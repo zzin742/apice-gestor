@@ -55,7 +55,7 @@ mod windows {
     }
 
     fn corpo() -> windows_service::Result<()> {
-        log("serviço iniciando");
+        crate::diario::registrar("serviço iniciando");
         let (parar_tx, parar_rx) = mpsc::channel();
 
         let handler = move |evento| -> ServiceControlHandlerResult {
@@ -106,32 +106,37 @@ mod windows {
                         ));
                         rt.spawn(comandos::rodar(api, data_dir));
                     }
-                    None => log("sem pasta de dados da máquina; heartbeat e ordens não iniciados"),
+                    None => crate::diario::registrar("sem pasta de dados da máquina; heartbeat e ordens não iniciados"),
                 }
                 // Bloqueia até o STOP. Ao retornar, o runtime é dropado e as tasks encerram.
                 let _ = parar_rx.recv();
             }
-            Err(e) => log(&format!("runtime async não iniciou: {e}")),
+            Err(e) => crate::diario::registrar(&format!("runtime async não iniciou: {e}")),
         }
 
-        log("serviço parando");
+        crate::diario::registrar("serviço parando");
         status.set_service_status(marcar(ServiceState::Stopped, ServiceControlAccept::empty()))?;
         Ok(())
     }
 
     /// Servidor IPC (named pipe). A2: uma conexão = um pedido + uma resposta, depois desconecta.
+    /// Quantas conexões em atendimento ao mesmo tempo (F1): cada uma pode fazer um get ao Hub, então
+    /// um cliente abrindo conexões em rajada não vira carga no Hub — acima disto responde rate_limited.
+    const CONEXOES: usize = 8;
+
     async fn servir_ipc(api: Arc<Api>, telemetria: Arc<Telemetria>) {
-        // E1: a próxima instância nasce ANTES de atender a atual, e cada conexão é atendida numa
-        // task com timeout — um cliente mudo ou lento não trava o serviço nem segura os outros.
+        // E1/E2: cada conexão é atendida numa task com timeout; o laço nunca desiste do pipe.
+        let limite = Arc::new(tokio::sync::Semaphore::new(CONEXOES));
         let mut servidor = instancia_com_backoff(true).await;
         loop {
             if servidor.connect().await.is_err() {
                 servidor = instancia_com_backoff(false).await;
                 continue;
             }
-            let proxima = instancia_com_backoff(false).await;
-            let conexao = std::mem::replace(&mut servidor, proxima);
-            tokio::spawn(atender_conexao(conexao, api.clone(), telemetria.clone()));
+            // F2: atende a conexão JÁ aceita antes de criar a próxima — se a criação cair em backoff,
+            // o cliente aceito não espera por isso.
+            tokio::spawn(atender_conexao(servidor, api.clone(), telemetria.clone(), limite.clone()));
+            servidor = instancia_com_backoff(false).await;
         }
     }
 
@@ -155,9 +160,9 @@ mod windows {
                 Ok(p) => return p,
                 Err(e) => {
                     if primeira {
-                        log(&format!("IPC: nome do pipe indisponível (sequestro?): {e}"));
+                        crate::diario::registrar(&format!("IPC: nome do pipe indisponível (sequestro?): {e}"));
                     } else {
-                        log(&format!("IPC: criar instância falhou: {e}"));
+                        crate::diario::registrar(&format!("IPC: criar instância falhou: {e}"));
                     }
                     tokio::time::sleep(Duration::from_secs(espera)).await;
                     espera = (espera * 2).min(60);
@@ -171,8 +176,18 @@ mod windows {
         mut pipe: tokio::net::windows::named_pipe::NamedPipeServer,
         api: Arc<Api>,
         telemetria: Arc<Telemetria>,
+        limite: Arc<tokio::sync::Semaphore>,
     ) {
         const LIMITE: Duration = Duration::from_secs(5);
+        // F1: sem permissão livre, recusa na hora (sem esperar) e desconecta.
+        let _permissao = match limite.try_acquire() {
+            Ok(p) => p,
+            Err(_) => {
+                let ocupado = Resposta::erro("rate_limited", "serviço ocupado");
+                let _ = tokio::time::timeout(LIMITE, ipc::responder(&mut pipe, &ocupado)).await;
+                return;
+            }
+        };
         let resposta = match tokio::time::timeout(LIMITE, ipc::ler_pedido(&mut pipe)).await {
             Ok(Leitura::Pedido(p)) => atender(p, &api, &telemetria).await,
             Ok(Leitura::Invalido) => Resposta::erro("bad_request", "pedido inválido"),
@@ -201,20 +216,4 @@ mod windows {
         }
     }
 
-    /// D6: log mínimo em %ProgramData%\ApiceGestor\servico.log — sem token, sem segredo. É o único
-    /// jeito de a Esteira diagnosticar queda na bancada (stderr de um serviço vai para o nada).
-    fn log(msg: &str) {
-        use std::io::Write;
-        const TETO: u64 = 1024 * 1024; // ~1 MB (E7d)
-        let Some(pasta) = crate::cofre::pasta_dados() else { return };
-        let _ = std::fs::create_dir_all(&pasta);
-        let arquivo = pasta.join("servico.log");
-        // Rotação simples: ao passar de ~1 MB, vira servico.log.1 (um histórico só).
-        if std::fs::metadata(&arquivo).map(|m| m.len() > TETO).unwrap_or(false) {
-            let _ = std::fs::rename(&arquivo, pasta.join("servico.log.1"));
-        }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&arquivo) {
-            let _ = writeln!(f, "{} v{} {}", crate::api::agora(), env!("CARGO_PKG_VERSION"), msg);
-        }
-    }
 }

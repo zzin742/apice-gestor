@@ -52,16 +52,25 @@ impl Telemetria {
 pub async fn rodar(api: Arc<Api>, telemetria: Arc<Telemetria>, data_dir: PathBuf, pausa: Pausa) {
     let mut config: Option<Value> = None;
     let mut config_lida_em: Option<Instant> = None;
+    let mut enrolado_antes: Option<bool> = None; // para logar só a transição
     loop {
         let vencida = config_lida_em.is_none_or(|t| t.elapsed() >= CONFIG_MAXIMO);
         if vencida {
             match api.get("me/config").await {
                 Ok(c) => {
+                    if enrolado_antes != Some(true) {
+                        crate::diario::registrar("enrolado: token aceito pelo Hub");
+                        enrolado_antes = Some(true);
+                    }
                     pausa(c["paused"].as_bool().unwrap_or(false));
                     config = Some(c);
                     config_lida_em = Some(Instant::now());
                 }
                 Err(e) if e.code == "not_enrolled" => {
+                    if enrolado_antes != Some(false) {
+                        crate::diario::registrar("sem token: aguardando enrolamento");
+                        enrolado_antes = Some(false);
+                    }
                     tokio::time::sleep(ESPERA_SEM_TOKEN).await;
                     continue;
                 }

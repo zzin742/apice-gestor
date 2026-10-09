@@ -20,7 +20,7 @@ tauri-plugin-opener = "2"
 reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json", "system-proxy"] }
 tauri-plugin-notification = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-tokio = { version = "1", features = ["time", "net", "io-util", "rt", "rt-multi-thread"] }
+tokio = { version = "1", features = ["time", "net", "io-util", "rt", "rt-multi-thread", "sync"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8.1"

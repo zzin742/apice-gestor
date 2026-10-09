@@ -326,6 +326,9 @@ async fn varrer(api: &Api, ja_recusados: &mut HashSet<String>) {
                 }
             }
         };
+        // Log de domínio (E7d): só o que casou com um item — entry_id + nome, nunca a lista do que
+        // a pessoa abre.
+        crate::diario::registrar(&format!("bloqueio {entry_id} {} {action}", proc.nome));
         // §9.5: reporta só o que casou com um item — nunca a lista do que a pessoa abre.
         eventos.push(json!({
             "entry_id": entry_id,
