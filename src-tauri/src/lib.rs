@@ -1,5 +1,6 @@
 mod api;
 mod batimento;
+mod comandos;
 mod desligar;
 mod enrolar;
 mod janela;
@@ -285,7 +286,9 @@ pub fn run() {
             janela::vigiar_monitores(painel);
             bandeja(app)?;
             ligar_autostart(app);
+            desligar::marcar_inicio(); // relógio do processo para a trava (b) das ordens
             batimento::iniciar(app.handle().clone());
+            comandos::iniciar(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -93,6 +93,12 @@ async fn enviar<R: Runtime>(
 ) -> Result<Value, api::ErroApi> {
     let telemetria = app.state::<Telemetria>();
     let aberturas = telemetria.aberturas.swap(0, Ordering::SeqCst);
+    // §8.5: id da última ordem executada (gravada antes de desligar, sobrevive ao boot).
+    let last_command_id = app
+        .path()
+        .app_local_data_dir()
+        .ok()
+        .and_then(|pasta| crate::desligar::Executados::em(&pasta).ultimo());
     let corpo = json!({
         "sent_at": api::agora(),
         "agent_version": env!("CARGO_PKG_VERSION"),
@@ -102,6 +108,8 @@ async fn enviar<R: Runtime>(
         "panel_opens_since_last": aberturas,
         "morning_shown_at": *telemetria.bom_dia_em.lock().unwrap(),
         "last_error_code": *api.ultimo_erro.lock().unwrap(),
+        "last_command_id": last_command_id,
+        "uptime_seconds": crate::desligar::uptime_windows_segundos(),
     });
     let resultado = api.post("heartbeat", &corpo).await;
     if resultado.is_err() {

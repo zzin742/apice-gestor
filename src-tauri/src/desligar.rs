@@ -1,19 +1,32 @@
 //! Terreno para o desligamento do PC por ordem do Hub
 //! (Jarvis: PROJETOS/Apice-Hub/Logs/2026-10-09-pedido-gestor-desligar-pc.md).
 //!
-//! NADA AQUI É CHAMADO AINDA. Espera o contrato das rotas (Ponte) e o "manda bala" do José Luiz.
-//! Estão prontas as travas que não dependem do contrato:
-//!   (b) ordem anterior ao boot é ignorada — `anterior_ao_boot`, com o tempo ligado monotônico;
+//! Contrato §8. As quatro travas contra o laço estão aqui e no laço de `comandos.rs`:
+//!   (a) claim 200 nesta execução — `api::Api::claim` (em comandos.rs);
+//!   (b) ordem anterior a esta execução é ignorada — `anterior_a_esta_execucao`, pelo uptime
+//!       DO PROCESSO (§8.6: a Inicialização Rápida pode não zerar o uptime do Windows);
 //!   (c) id gravado ANTES de desligar e nunca executado de novo — `Executados`;
 //!   (d) uma tentativa só da sequência shutdown → Stop-Computer → WMI — `desligar`.
-//! A trava (a), claim 200 nesta execução, depende das rotas e fica para depois.
-#![allow(dead_code)] // até o contrato fechar
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+
+/// Marcado uma vez, no começo do processo. A trava (b) compara a idade da ordem com isto.
+static INICIO: OnceLock<Instant> = OnceLock::new();
+
+/// Chamar cedo no `setup`, para o relógio do processo começar a contar do início.
+pub fn marcar_inicio() {
+    let _ = INICIO.get_or_init(Instant::now);
+}
+
+/// Quanto tempo este processo está no ar (relógio monotônico; independe do relógio do PC).
+fn uptime_processo() -> Duration {
+    INICIO.get_or_init(Instant::now).elapsed()
+}
 
 /// Quantos ids guardar; ordens vencem em minutos, então isso cobre muito mais que o necessário.
 const MAXIMO_GUARDADOS: usize = 500;
@@ -31,13 +44,15 @@ pub fn tempo_ligado() -> Option<Duration> {
     None
 }
 
-/// Trava (b): a ordem tem mais idade (relógio do servidor) do que o Windows tem de ligado?
-/// Então foi criada antes deste boot e não vale. Sem tempo ligado confiável, trata como anterior.
-pub fn anterior_ao_boot(age_seconds: u64) -> bool {
-    match tempo_ligado() {
-        Some(ligado) => age_seconds > ligado.as_secs(),
-        None => true,
-    }
+/// `uptime_seconds` do heartbeat (§8.5): tempo ligado do Windows em segundos, ou 0 fora do Windows.
+pub fn uptime_windows_segundos() -> u64 {
+    tempo_ligado().map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Trava (b): a ordem é mais velha que esta execução do app? Compara a idade da ordem (relógio do
+/// servidor) com o uptime DO PROCESSO. Igual-ou-mais-nova passa; mais velha é de antes e é ignorada.
+pub fn anterior_a_esta_execucao(age_seconds: u64) -> bool {
+    age_seconds > uptime_processo().as_secs()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -67,6 +82,14 @@ impl Executados {
             Err(e) if e.kind() == io::ErrorKind::NotFound => false,
             Err(_) => true,
         }
+    }
+
+    /// Id da última ordem executada (§8.5, `last_command_id`), ou `None`. Gravado antes de
+    /// desligar, sobrevive ao boot; é o que o heartbeat manda para o Hub fechar como executada.
+    pub fn ultimo(&self) -> Option<String> {
+        let texto = std::fs::read_to_string(&self.arquivo).ok()?;
+        let lista: Vec<Executado> = serde_json::from_str(&texto).ok()?;
+        lista.last().map(|e| e.id.clone())
     }
 
     /// Grava o id e só volta depois de o arquivo estar no disco (`sync_all`). Chamar ANTES de

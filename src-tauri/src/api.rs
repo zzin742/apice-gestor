@@ -123,6 +123,58 @@ impl Api {
         Err(erro_do_corpo(status, corpo.as_ref()))
     }
 
+    /// GET sem cache (ordens, §8.2: sem ETag, no-store). Não registra erro: a ausência de
+    /// ordens é o caso normal e um erro aqui não deve ocupar `last_error_code`.
+    pub async fn get_sem_cache(&self, rota: &str) -> Result<Value, ErroApi> {
+        let base = base_url().ok_or_else(sem_endereco)?;
+        let token = ler_token()?;
+        let resposta = self
+            .cliente
+            .get(format!("{base}/{rota}"))
+            .bearer_auth(&token)
+            .header("X-Gestor-Api", API_VERSAO)
+            .send()
+            .await
+            .map_err(|_| sem_conexao())?;
+        if let Some(erro) = redirecionou(&resposta) {
+            return Err(erro);
+        }
+        let status = resposta.status();
+        let corpo: Option<Value> = resposta.json().await.ok();
+        if status.is_success() {
+            return corpo.ok_or_else(|| ErroApi::novo("server_error", "Resposta ilegível."));
+        }
+        Err(erro_do_corpo(status, corpo.as_ref()))
+    }
+
+    /// Reivindica a ordem (§8.2). `true` só com `200`: é a trava (a). 409, rede, 5xx, corpo
+    /// ilegível — tudo vira `false`, e nada é executado nem repetido. Não registra erro
+    /// (command_gone é esperado).
+    pub async fn claim(&self, id: &str) -> bool {
+        let Some(base) = base_url() else { return false };
+        let Ok(token) = ler_token() else { return false };
+        let resposta = self
+            .cliente
+            .post(format!("{base}/me/commands/{id}/claim"))
+            .bearer_auth(&token)
+            .header("X-Gestor-Api", API_VERSAO)
+            .json(&serde_json::json!({}))
+            .send()
+            .await;
+        matches!(resposta, Ok(r) if r.status() == StatusCode::OK)
+    }
+
+    /// Avisa que a execução falhou (§8.2, result). Melhor esforço; nada depende do retorno.
+    pub async fn result_falhou(&self, id: &str, erro: &str) {
+        let recorte: String = erro.chars().take(500).collect();
+        let _ = self
+            .post_sem_registro(
+                &format!("me/commands/{id}/result"),
+                &serde_json::json!({ "status": "failed", "error": recorte }),
+            )
+            .await;
+    }
+
     /// `not_enrolled` é nosso, não veio do Hub: não entra em `last_error_code`.
     fn registrar_erro(&self, erro: &ErroApi) {
         if erro.code != "not_enrolled" {
