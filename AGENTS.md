@@ -58,8 +58,11 @@ muda e em quais máquinas.
 2. **Ele aprova dizendo "manda bala".** Antes disso, o que você tem é proposta.
 3. **Mudança visual: mostrar antes de subir.** O protótipo foi iterado quatro vezes até ser
    aprovado; não "melhore" o visual sem mostrar.
-4. **Segredo não entra em log nem em commit.** `.env` está no `.gitignore`; token de máquina
-   fica no keychain do Windows, nunca em arquivo texto.
+4. **Segredo não entra em log nem em commit.** `.env` está no `.gitignore`. O **token de máquina**
+   fica no **keychain do Windows** quando o agente roda na sessão do usuário; quando o agente roda como
+   **serviço SYSTEM** (que não lê o keychain do usuário), fica num **arquivo cifrado da máquina**:
+   DPAPI de **máquina** (só este PC descriptografa), permissão NTFS **só SYSTEM + Administradores**,
+   **nunca texto puro, nunca em log, nunca em commit**. É o equivalente do keychain para um serviço.
 5. **Errou? Diz direto, sem rodeio.**
 6. Demanda ambígua: **pergunte, não chute.**
 
