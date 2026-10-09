@@ -14,6 +14,8 @@ mod enrolar;
 mod ipc;
 mod janela;
 mod servico;
+#[cfg(windows)]
+mod sessao;
 
 use std::sync::Arc;
 
