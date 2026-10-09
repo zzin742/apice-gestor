@@ -38,6 +38,14 @@ fn caminho() -> Result<PathBuf, ErroCofre> {
     Ok(pasta()?.join(ARQUIVO))
 }
 
+/// Pasta de dados da MÁQUINA (a mesma do device.token, com a ACL fechada pelo --enrolar). O
+/// serviço guarda aqui os ids de ordens executadas (§8) — nunca em app_local_data_dir, que é por
+/// usuário e o colaborador apagaria (D2 do Diretor).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn pasta_dados() -> Option<PathBuf> {
+    pasta().ok()
+}
+
 /// Grava o token. No `--enrolar` (elevado). Escrita atômica: temp na mesma pasta + rename.
 pub fn gravar(token: &str) -> Result<(), ErroCofre> {
     use std::io::Write;

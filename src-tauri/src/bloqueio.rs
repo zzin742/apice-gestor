@@ -8,6 +8,14 @@
 //! O agente **só encerra** o processo (§9.1): não apaga, não desinstala, não bloqueia recurso.
 #![allow(dead_code)] // ligado quando o serviço entrar
 
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+
+use serde_json::{json, Value};
+
+use crate::api::Api;
+
 /// Um processo em execução, no que interessa para casar com a lista.
 #[derive(Clone, Debug)]
 pub struct Processo {
@@ -242,6 +250,106 @@ pub fn processos() -> Vec<Processo> {
 #[cfg(not(windows))]
 pub fn encerrar(_pid: u32) -> bool {
     false
+}
+
+// ----- Laço do watchdog (roda no serviço) -----
+
+/// §9.4: intervalo de `GET me/blocklist`, padrão e mínimo quando ligado.
+const POLL_PADRAO: u64 = 120;
+const POLL_MINIMO: u64 = 30;
+/// Enforcement desligado (`blocklist_poll_interval_seconds = 0`): reavalia o config de vez em quando.
+const POLL_DESLIGADO: u64 = 300;
+
+/// Laço do §9: a cada ciclo relê a lista e varre os processos. Reavalia os já abertos (varre todos),
+/// não só os que abrem depois (§9.4). O chamador (serviço) spawna no seu runtime.
+pub async fn rodar(api: Arc<Api>) {
+    // refused_protected é reportado uma vez por item nesta execução, para não repetir a cada ciclo
+    // (terminated/terminate_failed são ações reais e podem repetir: "reabriu, encerra de novo").
+    let mut ja_recusados: HashSet<String> = HashSet::new();
+    loop {
+        let intervalo = ciclo(&api, &mut ja_recusados).await;
+        tokio::time::sleep(Duration::from_secs(intervalo)).await;
+    }
+}
+
+async fn ciclo(api: &Api, ja_recusados: &mut HashSet<String>) -> u64 {
+    let poll = match api.get("me/config").await {
+        Ok(cfg) => cfg
+            .get("blocklist_poll_interval_seconds")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(POLL_PADRAO),
+        Err(_) => return POLL_PADRAO,
+    };
+    if poll == 0 {
+        return POLL_DESLIGADO; // enforcement desligado pelo admin
+    }
+    varrer(api, ja_recusados).await;
+    poll.max(POLL_MINIMO)
+}
+
+async fn varrer(api: &Api, ja_recusados: &mut HashSet<String>) {
+    // me/blocklist suporta ETag/304 (muda pouco); api.get devolve a última lista vigente.
+    let Ok(lista) = api.get("me/blocklist").await else { return };
+    let itens = itens_de(&lista);
+    if itens.is_empty() {
+        return;
+    }
+    let mut eventos = Vec::new();
+    for proc in processos() {
+        let Some((entry_id, acao)) = avaliar(&proc, &itens) else { continue };
+        let action = match acao {
+            // A allowlist vence: protegido nunca é encerrado. Reporta uma vez por item.
+            Acao::RecusarProtegido => {
+                if !ja_recusados.insert(entry_id.clone()) {
+                    continue;
+                }
+                "refused_protected"
+            }
+            Acao::Encerrar => {
+                if encerrar(proc.pid) {
+                    "terminated"
+                } else {
+                    "terminate_failed"
+                }
+            }
+        };
+        // §9.5: reporta só o que casou com um item — nunca a lista do que a pessoa abre.
+        eventos.push(json!({
+            "entry_id": entry_id,
+            "name": proc.nome,
+            "action": action,
+            "at": crate::api::agora(),
+        }));
+    }
+    if !eventos.is_empty() {
+        let _ = api.post("me/blocklist/events", &json!({ "events": eventos })).await;
+    }
+}
+
+/// Converte os `entries` do contrato (§9.2) em `Item`. Item sem critério forte (nome sozinho) ou
+/// com `match` desconhecido é descartado — nunca casa (§9.3).
+fn itens_de(lista: &Value) -> Vec<Item> {
+    lista
+        .get("entries")
+        .and_then(|e| e.as_array())
+        .map(|arr| arr.iter().filter_map(item_de).collect())
+        .unwrap_or_default()
+}
+
+fn item_de(v: &Value) -> Option<Item> {
+    let criterio = match v.get("match")?.as_str()? {
+        "name_and_path" => Criterio::NameAndPath,
+        "name_and_publisher" => Criterio::NameAndPublisher,
+        "path_exact" => Criterio::PathExact,
+        _ => return None, // nome sozinho / desconhecido: ignora
+    };
+    Some(Item {
+        id: v.get("id")?.as_str()?.to_owned(),
+        nome: v.get("name")?.as_str()?.to_owned(),
+        criterio,
+        caminho: v.get("path").and_then(|p| p.as_str()).map(str::to_owned),
+        publisher: v.get("publisher").and_then(|p| p.as_str()).map(str::to_owned),
+    })
 }
 
 #[cfg(test)]

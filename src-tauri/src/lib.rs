@@ -1,8 +1,12 @@
 mod api;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod batimento;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod bloqueio;
 mod cofre;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod comandos;
+#[cfg_attr(not(windows), allow(dead_code))]
 mod desligar;
 mod enrolar;
 mod ipc;
@@ -13,7 +17,7 @@ use std::sync::Arc;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{Manager, State, WebviewWindow, WindowEvent};
+use tauri::{Manager, WebviewWindow, WindowEvent};
 
 /// Muda o tamanho do painel mantendo parado o canto `ancora` da janela
 /// (`inferior-direito`, padrão; `inferior-esquerdo`, `superior-direito`, `superior-esquerdo`).
@@ -41,23 +45,31 @@ fn painel_posicao(window: WebviewWindow) -> Result<janela::Posicao, String> {
     janela::posicao(&window).map_err(|e| e.to_string())
 }
 
-/// Sinais da interface para o heartbeat: `aberto` (o usuário abriu o cartão) ou `bom_dia`.
-/// Sem retorno; a interface ignora falha.
-#[tauri::command]
-fn painel_evento(telemetria: State<'_, Arc<batimento::Telemetria>>, tipo: String) {
-    telemetria.registrar(&tipo);
+/// Converte a resposta do IPC no que os comandos Tauri devolvem ao JS.
+fn do_ipc(r: ipc::Resposta) -> Result<serde_json::Value, api::ErroApi> {
+    match r {
+        ipc::Resposta::Ok { dados } => Ok(dados),
+        ipc::Resposta::Erro { code, message } => Err(api::ErroApi::novo(&code, &message)),
+    }
 }
 
-/// `GET me/tasks`: o cartão inteiro, já resolvido pelo Hub (contrato §3).
+/// Sinal de UI para o heartbeat (`aberto`/`bom_dia`). A cápsula não conta nada local: repassa ao
+/// serviço pelo IPC (é lá que o heartbeat lê). Sem retorno; a interface ignora falha.
 #[tauri::command]
-async fn gestor_tarefas(api: State<'_, Arc<api::Api>>) -> Result<serde_json::Value, api::ErroApi> {
-    api.get("me/tasks").await
+async fn painel_evento(tipo: String) {
+    let _ = ipc::pedir(&ipc::Pedido::Evento { tipo }).await;
 }
 
-/// `GET me/config`: flags e parâmetros que o agente obedece (contrato §4).
+/// `GET me/tasks` — pela via do serviço (§3). A cápsula não fala HTTP nem vê o token.
 #[tauri::command]
-async fn gestor_config(api: State<'_, Arc<api::Api>>) -> Result<serde_json::Value, api::ErroApi> {
-    api.get("me/config").await
+async fn gestor_tarefas() -> Result<serde_json::Value, api::ErroApi> {
+    do_ipc(ipc::pedir(&ipc::Pedido::Tarefas).await)
+}
+
+/// `GET me/config` — pela via do serviço (§4).
+#[tauri::command]
+async fn gestor_config() -> Result<serde_json::Value, api::ErroApi> {
+    do_ipc(ipc::pedir(&ipc::Pedido::Config).await)
 }
 
 /// Ícone na bandeja com "Voltar ao canto". O texto do menu passa pelo José Luiz antes da bancada.
@@ -84,6 +96,28 @@ fn bandeja(app: &tauri::App) -> tauri::Result<()> {
 /// `--enrolar <código>`: devolve o código de saída do processo.
 pub fn enrolar(codigo: &str) -> i32 {
     enrolar::executar(codigo)
+}
+
+/// Flag de "escondida por pausa" da cápsula (estado só da cápsula; o single-instance lê).
+#[derive(Default)]
+struct PausaCapsula(Arc<std::sync::atomic::AtomicBool>);
+
+/// Esconde/mostra a janela conforme o `paused` do config, marcando o estado. Só reexibe o que ela
+/// mesma escondeu.
+fn aplicar_pausa<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    flag: &std::sync::atomic::AtomicBool,
+    pausado: bool,
+) {
+    use std::sync::atomic::Ordering;
+    let Some(painel) = app.get_webview_window("main") else { return };
+    if pausado {
+        if painel.hide().is_ok() {
+            flag.store(true, Ordering::SeqCst);
+        }
+    } else if flag.swap(false, Ordering::SeqCst) {
+        let _ = painel.show();
+    }
 }
 
 /// Modo serviço (`apice-gestor-servico.exe`): bloqueia até o SCM parar. Devolve o código de saída.
@@ -261,7 +295,7 @@ pub fn run() {
         // Primeiro plugin, como pede o single-instance: a segunda abertura só traz a existente
         // para a frente (a não ser que o Hub tenha pausado esta máquina).
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if app.state::<Arc<batimento::Telemetria>>().escondida() {
+            if app.state::<PausaCapsula>().0.load(std::sync::atomic::Ordering::SeqCst) {
                 return; // pausado pelo Hub: não reexibe a cápsula
             }
             if let Some(painel) = app.get_webview_window("main") {
@@ -278,9 +312,8 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         // Abre a tarefa no navegador padrão; o escopo fica em capabilities/default.json.
         .plugin(tauri_plugin_opener::init())
-        .manage(Arc::new(api::Api::new()))
         .manage(janela::Movimento::default())
-        .manage(Arc::new(batimento::Telemetria::default()))
+        .manage(PausaCapsula::default())
         .invoke_handler(tauri::generate_handler![
             painel_tamanho,
             painel_arrastar,
@@ -303,41 +336,22 @@ pub fn run() {
             janela::vigiar_monitores(painel);
             bandeja(app)?;
             ligar_autostart(app);
-            desligar::marcar_inicio(); // relógio do processo para a trava (b) das ordens
 
-            // Em dev/na cápsula os laços rodam aqui; no serviço (release) eles migram para o
-            // processo do serviço (sub-peça 3b). Ligados com a Api/Telemetria gerenciadas.
-            let api = (*app.state::<Arc<api::Api>>()).clone();
-            let telemetria = (*app.state::<Arc<batimento::Telemetria>>()).clone();
-            // Pausa na cápsula: esconde/mostra a janela e marca o estado (o single-instance lê).
+            // Os laços do Hub (heartbeat, ordens, bloqueio) rodam no SERVIÇO, não aqui. A cápsula só
+            // pede dados ao serviço pelo IPC. A pausa é PULL (D1): a cápsula pergunta o config no
+            // ritmo dela e esconde/mostra a própria janela; não há canal serviço→cápsula.
+            let flag = app.state::<PausaCapsula>().0.clone();
             let app_pausa = app.handle().clone();
-            let telem_pausa = telemetria.clone();
-            let pausa: batimento::Pausa = Arc::new(move |pausado| {
-                let Some(painel) = app_pausa.get_webview_window("main") else { return };
-                if pausado {
-                    if painel.hide().is_ok() {
-                        telem_pausa.definir_escondida(true);
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    if let ipc::Resposta::Ok { dados } =
+                        ipc::pedir(&ipc::Pedido::Config).await
+                    {
+                        aplicar_pausa(&app_pausa, &flag, dados["paused"].as_bool().unwrap_or(false));
                     }
-                } else if telem_pausa.definir_escondida(false) {
-                    let _ = painel.show();
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                 }
             });
-
-            // Sem diretório de dados não dá para garantir a trava (c) do desligar (o id da ordem
-            // executada precisa de um lugar fixo); então nem o heartbeat nem as ordens ligam. A
-            // cápsula (UI) segue funcionando. (C1 do Diretor: data_dir vazio furava a trava c.)
-            match app.path().app_local_data_dir() {
-                Ok(data_dir) => {
-                    tauri::async_runtime::spawn(batimento::rodar(
-                        api.clone(),
-                        telemetria,
-                        data_dir.clone(),
-                        pausa,
-                    ));
-                    tauri::async_runtime::spawn(comandos::rodar(api, data_dir));
-                }
-                Err(e) => eprintln!("sem diretório de dados ({e}); heartbeat e ordens não iniciados"),
-            }
             Ok(())
         })
         .run(tauri::generate_context!())

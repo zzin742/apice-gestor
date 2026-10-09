@@ -31,7 +31,7 @@ pub struct ErroApi {
 }
 
 impl ErroApi {
-    fn novo(code: &str, message: &str) -> Self {
+    pub fn novo(code: &str, message: &str) -> Self {
         Self { code: code.into(), message: message.into(), retry_after_seconds: None }
     }
 }
