@@ -22,6 +22,7 @@ pub struct Processo {
     pub nome: String,           // nome da imagem, ex.: "jogo.exe"
     pub caminho: String,        // caminho completo, ou "" se não obtido
     pub publisher: Option<String>, // sujeito do certificado Authenticode, se assinado e obtido
+    pub sessao: u32,            // sessão do Windows; 0 = Sessão 0 (serviços/SYSTEM)
 }
 
 /// Critério forte do item (§9.3). Nome sozinho nunca é aceito.
@@ -54,6 +55,11 @@ pub enum Acao {
 /// a fazer (não casou, ou casou sendo protegido sem nada a reportar — ver abaixo). Devolve o id do
 /// item que casou, para o relatório (§9.5).
 pub fn avaliar(proc: &Processo, itens: &[Item]) -> Option<(String, Acao)> {
+    // E3 (manda bala do José Luiz): só processo de SESSÃO DE USUÁRIO entra. Sessão 0 (serviços,
+    // SYSTEM) nunca é avaliada, nem que um item aponte para ela — trava acima da allowlist.
+    if proc.sessao == 0 {
+        return None;
+    }
     let protegido = eh_protegido(proc);
     for item in itens {
         if casa(proc, item) {
@@ -201,7 +207,8 @@ pub fn processos() -> Vec<Processo> {
             let nome = u16_ate_nul(&entrada.szExeFile);
             let pid = entrada.th32ProcessID;
             let caminho = caminho_do_processo(pid);
-            lista.push(Processo { pid, nome, caminho, publisher: None });
+            let sessao = sessao_do_processo(pid);
+            lista.push(Processo { pid, nome, caminho, publisher: None, sessao });
             ok = Process32NextW(snap, &mut entrada);
         }
         CloseHandle(snap);
@@ -247,6 +254,19 @@ pub fn encerrar(pid: u32) -> bool {
         CloseHandle(h);
         ok != 0
     }
+}
+
+/// Sessão do Windows do processo (E3). Falha → Sessão 0 (não avalia): na dúvida, não encerra.
+#[cfg(windows)]
+fn sessao_do_processo(pid: u32) -> u32 {
+    use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+    let mut sessao: u32 = 0;
+    unsafe {
+        if ProcessIdToSessionId(pid, &mut sessao) == 0 {
+            return 0;
+        }
+    }
+    sessao
 }
 
 #[cfg(windows)]
@@ -373,10 +393,19 @@ mod testes {
     use super::*;
 
     fn proc(nome: &str, caminho: &str) -> Processo {
-        Processo { pid: 10, nome: nome.into(), caminho: caminho.into(), publisher: None }
+        Processo { pid: 10, nome: nome.into(), caminho: caminho.into(), publisher: None, sessao: 1 }
     }
     fn item(id: &str, nome: &str, criterio: Criterio, caminho: Option<&str>) -> Item {
         Item { id: id.into(), nome: nome.into(), criterio, caminho: caminho.map(Into::into), publisher: None }
+    }
+
+    #[test]
+    fn sessao_zero_nunca_avaliada() {
+        // E3: mesmo um app comum que casaria, se estiver na Sessão 0, não é avaliado.
+        let mut p = proc("instalador.exe", r"C:\Users\joao\Downloads\instalador.exe");
+        p.sessao = 0;
+        let it = item("b", "instalador.exe", Criterio::NameAndPath, Some(r"C:\Users\*\Downloads\instalador.exe"));
+        assert_eq!(avaliar(&p, &[it]), None);
     }
 
     #[test]
