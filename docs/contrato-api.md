@@ -40,13 +40,28 @@ qualquer dado novo que a interface precisar vira campo novo aqui, combinado com 
 ### 1.2 Autenticação por token de dispositivo
 
 - O token sai **uma vez**, na resposta do `enroll`. O Hub guarda só o **hash SHA-256** dele.
-- O agente guarda o token no **Windows Credential Manager** (keychain), nunca em arquivo texto,
-  nunca em log. No Mac de desenvolvimento, no Keychain.
+- **O token é da máquina e mora no cofre da máquina** (desde 09/10/2026, com o agente como serviço
+  do Windows — proposta do Chassi, fechada pela Ponte; **a regra 4 do `AGENTS.md`, "keychain do
+  Windows", depende do José Luiz atualizar**):
+  - arquivo `%ProgramData%\ApiceGestor\device.token`, cifrado com **DPAPI escopo LocalMachine**;
+  - pasta `%ProgramData%\ApiceGestor\` com **herança desligada** e ACL só **SYSTEM** e
+    **Administradores** (controle total). Sem isso, a ACL padrão do `ProgramData` deixa *Usuários*
+    ler e criar ali;
+  - **a ACL é a proteção de verdade:** com escopo LocalMachine, qualquer processo da máquina consegue
+    decifrar o blob se conseguir lê-lo. O DPAPI impede que o arquivo copiado sirva em outra máquina;
+  - gravação atômica (arquivo temporário na mesma pasta + troca), nunca em log, nunca em texto puro.
+- **Só o serviço (SYSTEM) usa o token.** A cápsula, na sessão do usuário, **nunca** lê nem recebe o
+  token: pede os dados ao serviço por IPC, e quem fala com o Hub é o serviço.
+- No Mac de desenvolvimento não há serviço: o token de teste (`gdt_mock_*`) vem do mock e fica fora do
+  repo.
 - Envio: `Authorization: Bearer <token>`.
 - Formato: `gdt_` + 43 caracteres base64url (256 bits). Opaco: o agente não interpreta.
 - O token **não expira por tempo**; morre quando o admin **revoga** o dispositivo no Hub. Revogado →
   `401 token_revoked` e o agente volta para a tela de enrolamento.
 - Um token = uma máquina = uma pessoa. Trocar a pessoa de uma máquina é reenrolar.
+- **Reenrolar revoga o anterior:** um `enroll` com o mesmo `machine_id` de um dispositivo ativo
+  emite token novo e **revoga** o(s) anterior(es) daquela máquina (`401 token_revoked`). Nunca há dois
+  tokens vivos para o mesmo PC.
 
 ### 1.3 Cache — resposta autenticada é de uma pessoa só
 
@@ -87,6 +102,21 @@ Todo erro tem o mesmo corpo:
 | 503 | `unavailable` | Hub ou banco dos robôs fora | mantém o último dado, marca a cápsula como sem conexão, tenta de novo |
 | 500 | `server_error` | qualquer outra falha | idem 503 |
 
+#### Erros locais — caminho serviço → casca → interface
+
+A interface não fala com o Hub: recebe os dados do serviço por IPC (§1.2). Nesse caminho os erros
+mantêm **o mesmo formato** `{ code, message, retry_after_seconds }` e **os códigos do Hub passam sem
+tradução**. Dois códigos existem só no agente:
+
+| `code` | Quando | Na tela |
+|---|---|---|
+| `not_enrolled` | não há token no cofre da máquina | "não conectado" |
+| `network` | o Hub não respondeu (sem rede, DNS, timeout) | "sem conexão" |
+
+`not_enrolled`, `unauthorized` e `token_revoked` ("não conectado": precisa de enrolamento) ficam
+**sempre distintos** de `network`, `unavailable` e `server_error` ("sem conexão": é esperar). Nenhuma
+camada junta esses dois grupos num erro genérico.
+
 **Dispositivo pausado não é erro**: vem em `config.paused` (§4), e `me/tasks` continua respondendo.
 **Dado velho não é erro**: vem em `sync.stale` (§3), com os dados que existirem.
 
@@ -95,7 +125,8 @@ Todo erro tem o mesmo corpo:
 ## 2. `POST /api/gestor/enroll`
 
 Roda **uma vez por PC**, no script de instalação, com o código gerado na tela *Dispositivos* do Hub.
-Sem `Authorization`.
+Sem `Authorization`. O `--enrolar` roda **elevado** (administrador): é ele que grava o token no cofre
+da máquina (§1.2) e avisa o serviço para reler.
 
 **Requisição**
 
@@ -112,8 +143,8 @@ Sem `Authorization`.
 ```
 
 - `code`: 8 caracteres `[A-Z2-9]` (sem 0/O/1/I), com ou sem hífen, sem diferenciar caixa.
-- `machine_id`: o `MachineGuid` do Windows. Serve para o Hub avisar "esta máquina já foi enrolada
-  antes" — não é segredo nem autenticação.
+- `machine_id`: o `MachineGuid` do Windows. Identifica a máquina para **revogar o token anterior**
+  ao reenrolar (§1.2) — não é segredo nem autenticação.
 
 **Resposta `201`**
 

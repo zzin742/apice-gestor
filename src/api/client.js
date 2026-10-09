@@ -5,13 +5,14 @@
 //   const api = createClient({ baseUrl: 'http://127.0.0.1:8787/api/gestor', token, agentVersion: '0.1.0' });
 //   const data = await api.getTasks();   // corpo de §3; com ETag, devolve o último corpo quando vier 304
 //
-// O token NÃO é guardado aqui: quem chama lê do keychain e passa. Nunca logue o token.
+// O token NÃO é guardado aqui: no Windows quem chama é o serviço, que lê do cofre da máquina (§1.2)
+// e passa. A cápsula nunca tem o token. Nunca logue o token.
 
 export const API_VERSION = 1;
 export const MOCK_BASE_URL = 'http://127.0.0.1:8787/api/gestor';
 
 export class GestorApiError extends Error {
-  // code: um dos códigos de §1.4, ou 'network' quando nem chegou resposta.
+  // code: um dos códigos de §1.4, ou 'network' quando nem chegou resposta (erros locais, §1.4).
   constructor(code, message, { status = 0, retryAfterSeconds = null } = {}) {
     super(message);
     this.name = 'GestorApiError';

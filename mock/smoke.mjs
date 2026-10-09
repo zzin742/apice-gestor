@@ -116,6 +116,14 @@ try {
   assert.equal(statSync(file).mode & 0o777, 0o600);
   ok('token do enroll sobrevive a reinício (só SHA-256 em disco, 600)');
 
+  // Reenrolar a mesma máquina revoga o token anterior (§1.2).
+  const dev = { hostname: 'APICE-PES-014', os: 'Windows 11', machine_id: 'mg-reenrola' };
+  const t1 = (await api(null).enroll('K7QM-4XPA', dev)).token;
+  const t2 = (await api(null).enroll('K7QM-4XPA', dev)).token;
+  await expectErr(api(t1).getTasks(), 'token_revoked');
+  assert.equal((await api(t2).getTasks()).person.id, 'pes_rafael');
+  ok('reenrolar a mesma máquina revoga o token anterior');
+
   // ---------- Ordens ao dispositivo (§8) ----------
   const root = base.replace('/api/gestor', '');
   const admin = async (path, body) => (await fetch(root + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();

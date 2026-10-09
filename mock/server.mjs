@@ -19,7 +19,7 @@ const DEPARA_VERSION = 'dp-mock-1'; // versão do de-para dispositivo → pessoa
 const STATE_DIR = process.env.MOCK_STATE_DIR || join(homedir(), '.apice-gestor-mock');
 const STATE_FILE = join(STATE_DIR, 'issued.json');
 const sha256 = (t) => createHash('sha256').update(t).digest('hex');
-const issued = new Map(); // sha256(token) → { person, device_id, hostname, enrolled_at }
+const issued = new Map(); // sha256(token) → { person, device_id, hostname, machine_id, enrolled_at, revoked? }
 try {
   for (const [h, v] of Object.entries(JSON.parse(readFileSync(STATE_FILE, 'utf8')))) issued.set(h, v);
 } catch (e) { if (e.code !== 'ENOENT') console.error(`Estado ilegível em ${STATE_FILE}: ${e.message}`); }
@@ -113,6 +113,7 @@ function auth(req, res) {
   const m = /^Bearer (\S+)$/.exec(req.headers.authorization || '');
   if (!m) { fail(res, 'unauthorized'); return null; }
   const known = issued.get(sha256(m[1]));
+  if (known?.revoked) { fail(res, 'token_revoked'); return null; }
   if (known) return { token: m[1], key: known.person, device: known.device_id };
   const t = TOKENS[m[1]];
   if (!t) { fail(res, 'unauthorized'); return null; }
@@ -201,8 +202,11 @@ const routes = {
     if (c.kind !== 'ok') return fail(res, c.kind);
     const token = 'gdt_' + randomBytes(32).toString('base64url');
     const device_id = 'dev_' + sha256(token).slice(0, 12);
+    const machine_id = typeof body.device.machine_id === 'string' ? body.device.machine_id : null;
+    // Reenrolar a mesma máquina revoga o token anterior dela (§1.2).
+    if (machine_id) for (const v of issued.values()) if (v.machine_id === machine_id && !v.revoked) v.revoked = spInstant(now());
     issued.set(sha256(token), {
-      person: c.person, device_id, hostname: String(body.device.hostname ?? ''), enrolled_at: spInstant(now()),
+      person: c.person, device_id, hostname: String(body.device.hostname ?? ''), machine_id, enrolled_at: spInstant(now()),
     });
     saveIssued();
     send(res, 201, {
