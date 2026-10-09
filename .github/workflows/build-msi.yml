@@ -98,7 +98,14 @@ jobs:
           cargo build --release --manifest-path src-tauri/Cargo.toml --bin apice-gestor-servico
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npx tauri build --bundles msi
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($LASTEXITCODE -ne 0) {
+            # O tauri-bundler esconde a saída do candle/light; com -v ela aparece. A compilação já está
+            # pronta, então só o empacotamento roda de novo.
+            "::group::Falhou: empacotamento de novo com -v (saída do WiX)"
+            npx tauri build --bundles msi -v
+            "::endgroup::"
+            exit 1
+          }
 
       # O tauri-bundler nomeia o .msi como "{productName}_{versão}_{arch}_{idioma}.msi", com acento
       # e espaço ("Ápice Gestor_..."), e não oferece opção de config. Aqui ele vira um nome ASCII
