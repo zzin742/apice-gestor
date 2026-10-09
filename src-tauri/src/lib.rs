@@ -103,6 +103,11 @@ fn ligar_autostart(app: &tauri::App) {
         if elevado() {
             return;
         }
+        // Decisão do José Luiz (09/10/2026): se a pessoa desativou em Gerenciador de Tarefas →
+        // Aplicativos de inicialização, respeita. O enable() do plugin regravaria como ativado.
+        if desativado_pelo_usuario(&app.package_info().name) {
+            return;
+        }
         let autostart = app.autolaunch();
         if !autostart.is_enabled().unwrap_or(true) {
             let _ = autostart.enable();
@@ -110,6 +115,34 @@ fn ligar_autostart(app: &tauri::App) {
     }
     #[cfg(not(all(windows, not(debug_assertions))))]
     let _ = app;
+}
+
+/// O Gerenciador de Tarefas marca "desativado" em HKCU\...\Explorer\StartupApproved\Run, no valor
+/// com o nome do app: 12 bytes, o primeiro ímpar (0x03/0x07) e os 8 últimos com a hora da
+/// desativação. Sem o valor, nunca foi desativado.
+#[cfg(all(windows, not(debug_assertions)))]
+fn desativado_pelo_usuario(nome: &str) -> bool {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY};
+    let largo = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let chave = largo(r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run");
+    let valor = largo(nome);
+    let mut dados = [0u8; 12];
+    let mut tamanho = dados.len() as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            chave.as_ptr(),
+            valor.as_ptr(),
+            RRF_RT_REG_BINARY,
+            std::ptr::null_mut(),
+            dados.as_mut_ptr().cast(),
+            &mut tamanho,
+        )
+    };
+    if status != 0 || tamanho == 0 {
+        return false;
+    }
+    dados[0] & 1 == 1 || (tamanho >= 12 && dados[4..12].iter().any(|b| *b != 0))
 }
 
 /// O processo está rodando como administrador (UAC elevado)?
