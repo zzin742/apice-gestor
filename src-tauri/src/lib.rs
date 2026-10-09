@@ -1,5 +1,6 @@
 mod api;
 mod batimento;
+mod desligar;
 mod enrolar;
 mod janela;
 
