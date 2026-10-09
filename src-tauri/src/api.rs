@@ -1,5 +1,5 @@
 //! Chamadas autenticadas à API do Ápice Hub (docs/contrato-api.md).
-//! O token sai do keychain só para o cabeçalho `Authorization`: nunca vai para a interface,
+//! O token sai do cofre (cofre.rs) só para o cabeçalho `Authorization`: nunca vai para a interface,
 //! nunca vai para log.
 
 use std::collections::HashMap;
@@ -11,8 +11,6 @@ use serde::Serialize;
 use serde_json::Value;
 
 /// Onde o token do dispositivo fica guardado (Credential Manager no Windows, Keychain no Mac).
-const KEYCHAIN_SERVICO: &str = "br.com.apice.gestor";
-const KEYCHAIN_CONTA: &str = "token-dispositivo";
 
 /// Versão do contrato que o agente fala (§1.1).
 const API_VERSAO: &str = "1";
@@ -244,7 +242,7 @@ impl Api {
         }
         if erro.code == "token_revoked" {
             // §1.2: revogado → apaga o token e volta ao enrolamento.
-            let _ = keychain().and_then(|e| e.delete_credential().map_err(|_| erro_keychain()));
+            crate::cofre::apagar();
         }
         Err(erro)
     }
@@ -256,7 +254,7 @@ pub struct Enrolado {
     pub departamento: String,
 }
 
-/// `POST enroll` (contrato §2): troca o código pelo token e grava o token no keychain.
+/// `POST enroll` (contrato §2): troca o código pelo token e grava o token no cofre da máquina.
 /// Não repete nada sozinho; quem decide repetir é o chamador (`enrolar.rs`).
 pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
     let base = base_url().ok_or_else(sem_endereco)?;
@@ -281,7 +279,7 @@ pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
         .get("token")
         .and_then(Value::as_str)
         .ok_or_else(|| ErroApi::novo("server_error", "O Ápice Hub não devolveu o token."))?;
-    keychain()?.set_password(token).map_err(|_| erro_keychain())?;
+    crate::cofre::gravar(token).map_err(erro_cofre)?;
     let pessoa = |campo: &str| {
         corpo["person"].get(campo).and_then(Value::as_str).unwrap_or("").to_owned()
     };
@@ -339,24 +337,25 @@ fn erro_do_corpo(status: StatusCode, corpo: Option<&Value>) -> ErroApi {
     }
 }
 
-fn keychain() -> Result<keyring::Entry, ErroApi> {
-    keyring::Entry::new(KEYCHAIN_SERVICO, KEYCHAIN_CONTA).map_err(|_| erro_keychain())
+fn erro_cofre(e: crate::cofre::ErroCofre) -> ErroApi {
+    match e {
+        crate::cofre::ErroCofre::NaoEnrolado => ErroApi::novo(
+            "not_enrolled",
+            "Este computador ainda não foi conectado ao Ápice Hub.",
+        ),
+        crate::cofre::ErroCofre::Falha(motivo) => {
+            eprintln!("cofre: {motivo}");
+            falha_cofre()
+        }
+    }
 }
 
-fn erro_keychain() -> ErroApi {
+fn falha_cofre() -> ErroApi {
     ErroApi::novo("server_error", "Não foi possível usar o cofre de credenciais do Windows.")
 }
 
 fn ler_token() -> Result<String, ErroApi> {
-    match keychain()?.get_password() {
-        Ok(token) => Ok(token),
-        // Código local, fora do contrato: sem token aqui não é o 401 do Hub (combinado com a Prisma).
-        Err(keyring::Error::NoEntry) => Err(ErroApi::novo(
-            "not_enrolled",
-            "Este computador ainda não foi conectado ao Ápice Hub.",
-        )),
-        Err(_) => Err(erro_keychain()),
-    }
+    crate::cofre::ler().map_err(erro_cofre)
 }
 
 /// Identifica o token no cache sem guardar uma segunda cópia dele.

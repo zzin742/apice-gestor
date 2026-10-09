@@ -8,8 +8,6 @@
 //!
 //! Mac (desenvolvimento): arquivo simples em `~/.config/apice-gestor-dev/`, sem cifra — só para
 //! `cargo`/bancada de dev; o build de release é Windows.
-#![allow(dead_code)] // fundação do token do serviço; ligada quando o serviço entrar
-
 use std::path::PathBuf;
 
 /// Falta o arquivo (não enrolado) vs. qualquer outra falha (acesso, cifra).
@@ -18,6 +16,7 @@ pub enum ErroCofre {
     Falha(String),
 }
 
+#[cfg(windows)]
 const PASTA: &str = "ApiceGestor";
 const ARQUIVO: &str = "device.token";
 
