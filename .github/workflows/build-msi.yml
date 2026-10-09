@@ -93,6 +93,10 @@ jobs:
             "::warning::Sem GESTOR_API_BASE — este .msi abre, mas responde 'endereço não configurado'. Não serve para a bancada."
             "⚠️ **Sem endereço do Hub** — .msi não serve para a bancada." >> $env:GITHUB_STEP_SUMMARY
           }
+          # O serviço é crate separado do workspace (src-tauri/servico): o `tauri build` não o compila, e o
+          # src-tauri/wix/servico.wxs o empacota. Mesmo passo e mesmo GESTOR_API_BASE: ele também fala com a API.
+          cargo build --release --manifest-path src-tauri/Cargo.toml -p apice-gestor-servico
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npx tauri build --bundles msi
           if ($LASTEXITCODE -ne 0) {
             # O tauri-bundler esconde a saída do candle/light; com -v ela aparece. A compilação já está

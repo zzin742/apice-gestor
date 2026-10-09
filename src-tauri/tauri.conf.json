@@ -45,7 +45,13 @@
     ],
     "windows": {
       "wix": {
-        "upgradeCode": "97800a68-cabd-52e3-886a-6d8831965cff"
+        "upgradeCode": "97800a68-cabd-52e3-886a-6d8831965cff",
+        "fragmentPaths": [
+          "wix/servico.wxs"
+        ],
+        "componentRefs": [
+          "ApiceGestorServico"
+        ]
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper",
