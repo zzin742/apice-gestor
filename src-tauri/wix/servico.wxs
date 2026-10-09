@@ -8,6 +8,11 @@
   token em ProgramData (DPAPI LocalMachine) + enrolamento elevado.
   Demanda de bloqueio de apps, opção B. Plano: Jarvis/PROJETOS/Apice-Gestor/Esteira/Plano-servico-e-assinatura-2026-10-09.md
 
+  ⚠ DESLIGADO DO BUILD (09/10): o tauri-bundler 2.10.1 empacota sozinho todo [[bin]] do crate do
+  Tauri, num componente próprio com GUID aleatório, e o light recusa o mesmo arquivo em dois
+  componentes (ICE30). Para ligar de novo: o serviço vira um crate separado no workspace (fora dos
+  [[bin]] do crate do Tauri; decisão do Chassi) e o workflow o compila com `cargo build -p`.
+
   Como entra no build: tauri.conf.json → bundle.windows.wix.fragmentPaths ["wix/servico.wxs"] +
   componentRefs ["ApiceGestorServico"] (o tauri-bundler 2.10.1 já carrega o WixUtilExtension).
   O binário do serviço é compilado pelo workflow (build-msi.yml) antes do `tauri build`.
