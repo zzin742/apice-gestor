@@ -1,9 +1,12 @@
 //! Laço das ordens do Hub (contrato §8): consulta `me/commands`, aplica as quatro travas e,
 //! com a ordem reivindicada, desliga o PC. No máximo uma ordem por consulta.
+//!
+//! Agnóstico ao Tauri: recebe a `Api` e o diretório de dados; o chamador (serviço, ou a cápsula em
+//! dev) spawna `rodar` no seu runtime.
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
-
-use tauri::{AppHandle, Manager, Runtime};
 
 use crate::api::Api;
 use crate::desligar::{self, Executados};
@@ -17,19 +20,15 @@ const INTERVALO_DESLIGADO: u64 = 300;
 /// §8.6 (d): vivo este tempo depois de mandar desligar = a sequência falhou.
 const ESPERA_DESLIGAR: Duration = Duration::from_secs(60);
 
-pub fn iniciar<R: Runtime>(app: AppHandle<R>) {
-    tauri::async_runtime::spawn(async move {
-        loop {
-            let intervalo = ciclo(&app).await;
-            tokio::time::sleep(Duration::from_secs(intervalo)).await;
-        }
-    });
+pub async fn rodar(api: Arc<Api>, data_dir: PathBuf) {
+    loop {
+        let intervalo = ciclo(&api, &data_dir).await;
+        tokio::time::sleep(Duration::from_secs(intervalo)).await;
+    }
 }
 
 /// Uma volta do laço. Devolve quantos segundos dormir até a próxima.
-async fn ciclo<R: Runtime>(app: &AppHandle<R>) -> u64 {
-    let api = app.state::<Api>();
-
+async fn ciclo(api: &Api, data_dir: &Path) -> u64 {
     // O intervalo (e o liga/desliga) vêm do me/config; a leitura é barata (cache ETag).
     let poll = match api.get("me/config").await {
         Ok(cfg) => cfg
@@ -43,12 +42,12 @@ async fn ciclo<R: Runtime>(app: &AppHandle<R>) -> u64 {
         return INTERVALO_DESLIGADO; // ordens desligadas pelo admin
     }
 
-    verificar(app, &api).await;
+    verificar(api, data_dir).await;
     poll.max(INTERVALO_MINIMO)
 }
 
 /// Processa no máximo uma ordem, na ordem de operações do §8.6.
-async fn verificar<R: Runtime>(app: &AppHandle<R>, api: &Api) {
+async fn verificar(api: &Api, data_dir: &Path) {
     let Ok(resposta) = api.get_sem_cache("me/commands").await else { return };
     let Some(ordem) = resposta.get("commands").and_then(|c| c.as_array()).and_then(|a| a.first())
     else {
@@ -62,10 +61,7 @@ async fn verificar<R: Runtime>(app: &AppHandle<R>, api: &Api) {
     let Some(id) = ordem.get("id").and_then(|v| v.as_str()) else { return };
     let age = ordem.get("age_seconds").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
 
-    let executados = match app.path().app_local_data_dir() {
-        Ok(pasta) => Executados::em(&pasta),
-        Err(_) => return, // sem onde gravar: não arrisca a trava (c)
-    };
+    let executados = Executados::em(data_dir);
 
     // (c) já executado nunca roda de novo.
     if executados.contem(id) {

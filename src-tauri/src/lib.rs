@@ -9,6 +9,8 @@ mod ipc;
 mod janela;
 mod servico;
 
+use std::sync::Arc;
+
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, State, WebviewWindow, WindowEvent};
@@ -42,19 +44,19 @@ fn painel_posicao(window: WebviewWindow) -> Result<janela::Posicao, String> {
 /// Sinais da interface para o heartbeat: `aberto` (o usuário abriu o cartão) ou `bom_dia`.
 /// Sem retorno; a interface ignora falha.
 #[tauri::command]
-fn painel_evento(telemetria: State<'_, batimento::Telemetria>, tipo: String) {
+fn painel_evento(telemetria: State<'_, Arc<batimento::Telemetria>>, tipo: String) {
     telemetria.registrar(&tipo);
 }
 
 /// `GET me/tasks`: o cartão inteiro, já resolvido pelo Hub (contrato §3).
 #[tauri::command]
-async fn gestor_tarefas(api: State<'_, api::Api>) -> Result<serde_json::Value, api::ErroApi> {
+async fn gestor_tarefas(api: State<'_, Arc<api::Api>>) -> Result<serde_json::Value, api::ErroApi> {
     api.get("me/tasks").await
 }
 
 /// `GET me/config`: flags e parâmetros que o agente obedece (contrato §4).
 #[tauri::command]
-async fn gestor_config(api: State<'_, api::Api>) -> Result<serde_json::Value, api::ErroApi> {
+async fn gestor_config(api: State<'_, Arc<api::Api>>) -> Result<serde_json::Value, api::ErroApi> {
     api.get("me/config").await
 }
 
@@ -259,8 +261,8 @@ pub fn run() {
         // Primeiro plugin, como pede o single-instance: a segunda abertura só traz a existente
         // para a frente (a não ser que o Hub tenha pausado esta máquina).
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if batimento::pausado(app) {
-                return;
+            if app.state::<Arc<batimento::Telemetria>>().escondida() {
+                return; // pausado pelo Hub: não reexibe a cápsula
             }
             if let Some(painel) = app.get_webview_window("main") {
                 let _ = painel.show();
@@ -276,9 +278,9 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         // Abre a tarefa no navegador padrão; o escopo fica em capabilities/default.json.
         .plugin(tauri_plugin_opener::init())
-        .manage(api::Api::new())
+        .manage(Arc::new(api::Api::new()))
         .manage(janela::Movimento::default())
-        .manage(batimento::Telemetria::default())
+        .manage(Arc::new(batimento::Telemetria::default()))
         .invoke_handler(tauri::generate_handler![
             painel_tamanho,
             painel_arrastar,
@@ -302,8 +304,34 @@ pub fn run() {
             bandeja(app)?;
             ligar_autostart(app);
             desligar::marcar_inicio(); // relógio do processo para a trava (b) das ordens
-            batimento::iniciar(app.handle().clone());
-            comandos::iniciar(app.handle().clone());
+
+            // Em dev/na cápsula os laços rodam aqui; no serviço (release) eles migram para o
+            // processo do serviço (sub-peça 3b). Ligados com a Api/Telemetria gerenciadas.
+            let api = (*app.state::<Arc<api::Api>>()).clone();
+            let telemetria = (*app.state::<Arc<batimento::Telemetria>>()).clone();
+            let data_dir = app.path().app_local_data_dir().unwrap_or_default();
+
+            // Pausa na cápsula: esconde/mostra a janela e marca o estado (o single-instance lê).
+            let app_pausa = app.handle().clone();
+            let telem_pausa = telemetria.clone();
+            let pausa: batimento::Pausa = Arc::new(move |pausado| {
+                let Some(painel) = app_pausa.get_webview_window("main") else { return };
+                if pausado {
+                    if painel.hide().is_ok() {
+                        telem_pausa.definir_escondida(true);
+                    }
+                } else if telem_pausa.definir_escondida(false) {
+                    let _ = painel.show();
+                }
+            });
+
+            tauri::async_runtime::spawn(batimento::rodar(
+                api.clone(),
+                telemetria,
+                data_dir.clone(),
+                pausa,
+            ));
+            tauri::async_runtime::spawn(comandos::rodar(api, data_dir));
             Ok(())
         })
         .run(tauri::generate_context!())

@@ -1,13 +1,17 @@
-//! Heartbeat (contrato §5) e o `me/config` que a casca obedece sozinha (`paused`).
+//! Heartbeat (contrato §5) e o `me/config` que o agente obedece sozinho (`paused`).
 //! Só telemetria do agente: nada de tela, teclado, aplicativo ou janela de outro programa.
 //! Falha de heartbeat nunca aparece para o usuário; tenta de novo no próximo ciclo.
+//!
+//! Agnóstico ao Tauri: recebe a `Api`, a `Telemetria`, o diretório de dados e um callback de
+//! pausa. Quem decide o efeito da pausa é o chamador — na cápsula, esconder/mostrar a janela; no
+//! serviço, avisar a cápsula pelo IPC.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, Runtime};
 
 use crate::api::{self, Api};
 
@@ -19,12 +23,14 @@ const CONFIG_MAXIMO: Duration = Duration::from_secs(3600);
 /// Sem token ainda: espera o enrolamento sem martelar nada.
 const ESPERA_SEM_TOKEN: Duration = Duration::from_secs(300);
 
-/// O que a interface relata pelo `painel_evento`.
+/// Callback de pausa: recebe o `paused` do config. Implementado pelo chamador.
+pub type Pausa = Arc<dyn Fn(bool) + Send + Sync>;
+
+/// O que a interface relata pelo `painel_evento`, mais a marca de "escondida por pausa".
 #[derive(Default)]
 pub struct Telemetria {
     aberturas: AtomicU32,
     bom_dia_em: Mutex<Option<String>>,
-    /// A casca escondeu a janela por `paused`; só ela mostra de volta.
     escondida_por_pausa: AtomicBool,
 }
 
@@ -39,66 +45,71 @@ impl Telemetria {
             _ => {}
         }
     }
+
+    /// Marca/limpa "escondida por pausa"; devolve o valor anterior. Usado pelo callback de pausa
+    /// da cápsula para só reexibir a janela que ele mesmo escondeu.
+    pub fn definir_escondida(&self, v: bool) -> bool {
+        self.escondida_por_pausa.swap(v, Ordering::SeqCst)
+    }
+
+    /// A cápsula está escondida pela pausa do Hub? (o single-instance não reexibe nesse caso).
+    pub fn escondida(&self) -> bool {
+        self.escondida_por_pausa.load(Ordering::SeqCst)
+    }
 }
 
-/// Laço da casca: config ao iniciar, heartbeat a cada `heartbeat_interval_seconds`,
-/// config de novo quando o heartbeat disser que mudou ou a cada hora.
-pub fn iniciar<R: Runtime>(app: AppHandle<R>) {
-    tauri::async_runtime::spawn(async move {
-        let api = app.state::<Api>();
-        let mut config: Option<Value> = None;
-        let mut config_lida_em: Option<Instant> = None;
-        loop {
-            let vencida = config_lida_em.is_none_or(|t| t.elapsed() >= CONFIG_MAXIMO);
-            if vencida {
-                match api.get("me/config").await {
-                    Ok(c) => {
-                        aplicar_pausa(&app, c["paused"].as_bool().unwrap_or(false));
-                        config = Some(c);
-                        config_lida_em = Some(Instant::now());
-                    }
-                    Err(e) if e.code == "not_enrolled" => {
-                        tokio::time::sleep(ESPERA_SEM_TOKEN).await;
-                        continue;
-                    }
-                    Err(_) => {} // segue com a config anterior; tenta de novo no próximo ciclo
+/// Laço: config ao iniciar, heartbeat a cada `heartbeat_interval_seconds`, config de novo quando o
+/// heartbeat disser que mudou ou a cada hora. O chamador spawna no seu runtime.
+pub async fn rodar(api: Arc<Api>, telemetria: Arc<Telemetria>, data_dir: PathBuf, pausa: Pausa) {
+    let mut config: Option<Value> = None;
+    let mut config_lida_em: Option<Instant> = None;
+    loop {
+        let vencida = config_lida_em.is_none_or(|t| t.elapsed() >= CONFIG_MAXIMO);
+        if vencida {
+            match api.get("me/config").await {
+                Ok(c) => {
+                    pausa(c["paused"].as_bool().unwrap_or(false));
+                    config = Some(c);
+                    config_lida_em = Some(Instant::now());
                 }
-            }
-
-            let versao_enviada = config.as_ref().and_then(|c| c["config_version"].as_str()).map(str::to_owned);
-            if let Ok(resposta) = enviar(&app, &api, versao_enviada.as_deref()).await {
-                // Só compara quando temos uma config: sem ela, a releitura já está agendada.
-                let mudou = versao_enviada.is_some()
-                    && resposta["config_version"].as_str() != versao_enviada.as_deref();
-                if mudou {
-                    config_lida_em = None; // mudou no Hub: relê no começo do próximo laço
+                Err(e) if e.code == "not_enrolled" => {
+                    tokio::time::sleep(ESPERA_SEM_TOKEN).await;
                     continue;
                 }
+                Err(_) => {} // segue com a config anterior; tenta de novo no próximo ciclo
             }
-
-            let intervalo = config
-                .as_ref()
-                .and_then(|c| c["heartbeat_interval_seconds"].as_u64())
-                .unwrap_or(HEARTBEAT_PADRAO)
-                .max(HEARTBEAT_MINIMO);
-            tokio::time::sleep(Duration::from_secs(intervalo)).await;
         }
-    });
+
+        let versao_enviada =
+            config.as_ref().and_then(|c| c["config_version"].as_str()).map(str::to_owned);
+        if let Ok(resposta) = enviar(&api, &telemetria, &data_dir, versao_enviada.as_deref()).await {
+            // Só compara quando temos uma config: sem ela, a releitura já está agendada.
+            let mudou = versao_enviada.is_some()
+                && resposta["config_version"].as_str() != versao_enviada.as_deref();
+            if mudou {
+                config_lida_em = None; // mudou no Hub: relê no começo do próximo laço
+                continue;
+            }
+        }
+
+        let intervalo = config
+            .as_ref()
+            .and_then(|c| c["heartbeat_interval_seconds"].as_u64())
+            .unwrap_or(HEARTBEAT_PADRAO)
+            .max(HEARTBEAT_MINIMO);
+        tokio::time::sleep(Duration::from_secs(intervalo)).await;
+    }
 }
 
-async fn enviar<R: Runtime>(
-    app: &AppHandle<R>,
+async fn enviar(
     api: &Api,
+    telemetria: &Telemetria,
+    data_dir: &Path,
     config_version: Option<&str>,
 ) -> Result<Value, api::ErroApi> {
-    let telemetria = app.state::<Telemetria>();
     let aberturas = telemetria.aberturas.swap(0, Ordering::SeqCst);
     // §8.5: id da última ordem executada (gravada antes de desligar, sobrevive ao boot).
-    let last_command_id = app
-        .path()
-        .app_local_data_dir()
-        .ok()
-        .and_then(|pasta| crate::desligar::Executados::em(&pasta).ultimo());
+    let last_command_id = crate::desligar::Executados::em(data_dir).ultimo();
     let corpo = json!({
         "sent_at": api::agora(),
         "agent_version": env!("CARGO_PKG_VERSION"),
@@ -117,22 +128,4 @@ async fn enviar<R: Runtime>(
         telemetria.aberturas.fetch_add(aberturas, Ordering::SeqCst);
     }
     resultado
-}
-
-/// `paused: true` → a cápsula some (fica só a bandeja); `false` → volta, se fomos nós que escondemos.
-fn aplicar_pausa<R: Runtime>(app: &AppHandle<R>, pausado: bool) {
-    let Some(painel) = app.get_webview_window("main") else { return };
-    let telemetria = app.state::<Telemetria>();
-    if pausado {
-        if painel.hide().is_ok() {
-            telemetria.escondida_por_pausa.store(true, Ordering::SeqCst);
-        }
-    } else if telemetria.escondida_por_pausa.swap(false, Ordering::SeqCst) {
-        let _ = painel.show();
-    }
-}
-
-/// A casca está pausada pelo Hub? (a segunda abertura do app não deve mostrar a janela).
-pub fn pausado<R: Runtime>(app: &AppHandle<R>) -> bool {
-    app.state::<Telemetria>().escondida_por_pausa.load(Ordering::SeqCst)
 }
