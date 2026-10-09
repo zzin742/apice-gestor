@@ -45,6 +45,22 @@ Get-Content .\SHA256SUMS.txt
 - **Esperado:** os dois códigos são iguais e batem com o SHA-256 que o Vigia passou.
 - **Se forem diferentes:** não instale.
 
+Antes de instalar, crie a **exceção no Defender** para a pasta do app. Abra um **segundo
+PowerShell como administrador** (menu Iniciar → digite PowerShell → botão direito → *Executar como
+administrador*) e cole:
+
+```powershell
+$pasta = Join-Path $env:ProgramFiles ([char]0x00C1 + 'pice Gestor')
+Add-MpPreference -ExclusionPath $pasta
+(Get-MpPreference).ExclusionPath -contains $pasta
+```
+
+- **Esperado:** a última linha responde `True`. Rodar de novo não duplica nada.
+- **Se der erro** ("0x800106ba" ou outro antivírus no lugar do Defender): anote e siga. Avise o
+  Vigia qual antivírus o PC usa.
+
+Feche esse PowerShell de administrador. **O resto do roteiro é no PowerShell normal.**
+
 Depois, dê **dois cliques no .msi**. O Windows vai avisar que o arquivo não é assinado ("O Windows
 protegeu o computador" → **Mais informações → Executar assim mesmo**). É esperado: ainda não temos
 certificado. Aceite o UAC.
@@ -138,13 +154,20 @@ Configurações → Aplicativos → **Ápice Gestor** → Desinstalar. O token f
 Credenciais do Windows: **Credenciais do Windows → Credenciais genéricas →** item com
 `br.com.apice.gestor` → Remover.
 
+Para tirar a exceção do Defender (PowerShell **como administrador**):
+
+```powershell
+Remove-MpPreference -ExclusionPath (Join-Path $env:ProgramFiles ([char]0x00C1 + 'pice Gestor'))
+```
+
 ## 6. Se falhar, anote
 
 Mande para o Vigia, com foto da tela quando ajudar:
 
 1. **Em qual passo** parou (1 a 4c) e o horário.
 2. **Passo 1:** o que o navegador mostrou.
-3. **Passo 2:** os dois SHA-256 e a mensagem do instalador (texto ou código de erro).
+3. **Passo 2:** o resultado da exceção no Defender (`True` ou o erro), os dois SHA-256 e a mensagem
+   do instalador (texto ou código de erro).
 4. **Passo 3:** o número da **saída** e o texto impresso. **Não** mande o código de enrolamento
    por WhatsApp/grupo.
 5. **Passo 4:** o **estado do painel**: a cápsula apareceu? onde? Está âmbar ("dados de ontem"),

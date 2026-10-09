@@ -188,6 +188,22 @@ function RelancarElevado([string]$etapa, [string[]]$extras) {
     return $p.ExitCode
 }
 
+# Exceção no Defender (pasta do app), ANTES do .msi: o Defender não pode segurar a cópia nem o
+# primeiro start do app (e, depois, do serviço). Sem Defender ativo (outro antivírus): avisa e segue.
+function ExcecaoDefender {
+    try {
+        $existentes = @((Get-MpPreference).ExclusionPath)
+        if ($existentes -contains $PastaApp) {
+            Escrever 'Defender: exceção já existe.'
+        } else {
+            Add-MpPreference -ExclusionPath $PastaApp
+            Escrever "Defender: exceção adicionada para $PastaApp." 'Green'
+        }
+    } catch {
+        Escrever "Defender: não deu para configurar ($($_.Exception.Message)). Se houver outro antivírus, adicione a exceção de $PastaApp nele." 'Yellow'
+    }
+}
+
 # --- Etapa da máquina: instalar (administrador) ----------------------------------------------
 function EtapaMaquina([string]$msi) {
     Escrever '== Etapa da máquina ==' 'Cyan'
@@ -205,6 +221,8 @@ function EtapaMaquina([string]$msi) {
         if (-not (WebView2Presente)) { throw "WebView2 não instalou (código $($p.ExitCode)). Confira a internet e rode de novo." }
         Escrever 'WebView2: instalado.' 'Green'
     }
+
+    ExcecaoDefender
 
     # .msi: pula só se ESTE .msi (mesmo ProductCode) já está instalado. Todo build do piloto sai
     # 0.1.0, então comparar versão não basta; o template do Tauri aceita atualizar na mesma versão.
@@ -233,18 +251,6 @@ function EtapaMaquina([string]$msi) {
     }
     if (-not (Test-Path $Exe)) { throw "Executável não encontrado em $Exe depois da instalação." }
 
-    # Exceção no Defender (pasta do app). Sem Defender ativo (outro antivírus): avisa e segue.
-    try {
-        $existentes = @((Get-MpPreference).ExclusionPath)
-        if ($existentes -contains $PastaApp) {
-            Escrever 'Defender: exceção já existe.'
-        } else {
-            Add-MpPreference -ExclusionPath $PastaApp
-            Escrever "Defender: exceção adicionada para $PastaApp." 'Green'
-        }
-    } catch {
-        Escrever "Defender: não deu para configurar ($($_.Exception.Message)). Se houver outro antivírus, adicione a exceção de $PastaApp nele." 'Yellow'
-    }
 }
 
 # --- Etapa da máquina: desinstalar (administrador) -------------------------------------------
