@@ -124,22 +124,44 @@ jobs:
           $exe = Join-Path $env:ProgramFiles (([char]0x00C1 + 'pice Gestor') + '\apice-gestor.exe')
           $log = Join-Path $env:ProgramData 'ApiceGestor\instalar.log'
 
+          $nome = [char]0x00C1 + 'pice Gestor'
+          $run  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $apr  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+          function NoRun { (Get-Item $run).GetValue($nome) }
+
+          # 1. Instala: exe no lugar e início automático registrado no HKCU do usuário.
           & $s -Msi $msi -SemEnrolar
           if ($LASTEXITCODE -ne 0) { throw "instalar falhou ($LASTEXITCODE)" }
           if (-not (Test-Path $exe)) { throw "exe não instalado em $exe" }
+          if ((NoRun) -ne "`"$exe`" --sessao") { throw "Run errado: '$(NoRun)'" }
 
+          # 2. Repete: nada a fazer, nem no .msi nem no Run.
           & $s -Msi $msi -SemEnrolar
           if ($LASTEXITCODE -ne 0) { throw "segunda execução falhou ($LASTEXITCODE)" }
           if (-not (Select-String -Path $log -Pattern 'nada a fazer' -Quiet)) { throw 'segunda execução reinstalou: não é idempotente' }
+          if (-not (Select-String -Path $log -Pattern 'registrado\.\s*$' -Quiet)) { throw 'Run regravado na segunda execução' }
 
-          # Simula o autostart que o app grava em HKCU\Run; o -Desinstalar tem que limpar.
-          $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-          New-ItemProperty -Path $run -Name 'TesteApiceGestor' -Value "`"$exe`"" -Force | Out-Null
+          # 3. A pessoa desativou no Gerenciador de Tarefas (StartupApproved com data nos 8 últimos
+          #    bytes) e o valor do Run sumiu: reinstalar NÃO religa.
+          Remove-ItemProperty -Path $run -Name $nome
+          if (-not (Test-Path $apr)) { New-Item -Path $apr -Force | Out-Null }
+          [byte[]]$desativado = 3,0,0,0, 0x10,0x20,0x30,0x40,0x50,0x60,0xD9,0x01
+          New-ItemProperty -Path $apr -Name $nome -PropertyType Binary -Value $desativado -Force | Out-Null
+          & $s -Msi $msi -SemEnrolar
+          if ($LASTEXITCODE -ne 0) { throw "reinstalar com desativado falhou ($LASTEXITCODE)" }
+          if ($null -ne (NoRun)) { throw 'religou o início automático que a pessoa desativou' }
+          Remove-ItemProperty -Path $apr -Name $nome
 
+          # 4. Desinstala: some o exe e o Run; a marca de desativado (se houver) fica.
+          & $s -Msi $msi -SemEnrolar
+          if ($null -eq (NoRun)) { throw 'não registrou de novo depois de reativado' }
+          New-ItemProperty -Path $apr -Name $nome -PropertyType Binary -Value $desativado -Force | Out-Null
           & $s -Desinstalar
           if ($LASTEXITCODE -ne 0) { throw "desinstalar falhou ($LASTEXITCODE)" }
           if (Test-Path $exe) { throw 'exe continua lá depois de desinstalar' }
-          if ((Get-ItemProperty $run).PSObject.Properties['TesteApiceGestor']) { throw 'autostart ficou em HKCU\Run' }
+          if ($null -ne (NoRun)) { throw 'início automático ficou em HKCU\Run' }
+          if ($null -eq (Get-Item $apr).GetValue($nome)) { throw 'apagou a marca de desativado do Gerenciador de Tarefas' }
+          Remove-ItemProperty -Path $apr -Name $nome
 
           & $s -Desinstalar
           if ($LASTEXITCODE -ne 0) { throw "desinstalar 2x falhou ($LASTEXITCODE)" }

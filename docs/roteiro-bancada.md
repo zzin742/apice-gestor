@@ -113,6 +113,25 @@ Abra o **Ápice Gestor** pelo menu Iniciar.
 - [ ] **6. Voltar ao canto:** clique com o botão direito no ícone da bandeja → **Voltar ao canto**.
       **Esperado:** a cápsula volta ao canto inferior direito, acima da barra.
 
+## 4c. Início automático com o Windows (critério 6 do pedido de 09/10)
+
+O Gestor tem que estar rodando sempre que a pessoa entrar no Windows, sem ninguém abrir nada.
+
+- [ ] **1. Ligar sem abrir nada:** desligue o PC pelo menu Iniciar, ligue de novo e entre no
+      Windows **sem abrir nenhum programa**. **Esperado:** a cápsula aparece sozinha no canto, e
+      em `https://www.apicehub.com.br/admin/dispositivos` a máquina mostra um **último contato
+      novo**, da hora em que o PC ligou.
+- [ ] **2. Depois de desativar e abrir uma vez:** Gerenciador de Tarefas (Ctrl+Shift+Esc) →
+      **Inicializar** (ou "Aplicativos de inicialização") → **Ápice Gestor** → **Desabilitar**.
+      Abra o app **uma vez** pelo menu Iniciar. Desligue e ligue o PC sem abrir nada.
+      **Esperado:** o Gestor sobe sozinho de novo.
+
+Anote em cada item a hora em que ligou o PC e a hora do último contato no Hub. Uma diferença
+grande também é falha.
+
+> O **instalador** respeita quem desativou: reinstalar não religa (decisão do José Luiz, 09/10).
+> Quem religa é o **app**, quando alguém o abre. Por isso o item 2 abre o app uma vez.
+
 ## 5. Desfazer (se o José Luiz pedir)
 
 Configurações → Aplicativos → **Ápice Gestor** → Desinstalar. O token fica no Gerenciador de
@@ -123,7 +142,7 @@ Credenciais do Windows: **Credenciais do Windows → Credenciais genéricas →*
 
 Mande para o Vigia, com foto da tela quando ajudar:
 
-1. **Em qual passo** parou (1 a 4b) e o horário.
+1. **Em qual passo** parou (1 a 4c) e o horário.
 2. **Passo 1:** o que o navegador mostrou.
 3. **Passo 2:** os dois SHA-256 e a mensagem do instalador (texto ou código de erro).
 4. **Passo 3:** o número da **saída** e o texto impresso. **Não** mande o código de enrolamento
@@ -132,7 +151,10 @@ Mande para o Vigia, com foto da tela quando ajudar:
    "sem conexão", "não configurado", vazia ou com tarefas? Foto da cápsula e do cartão aberto.
 6. **Passo 4b:** qual item (1 a 6) falhou, onde a cápsula estava na tela e o que aconteceu
    (não mexeu, cartão não recolheu, abriu cortado, posição perdida...). Um vídeo do celular ajuda.
-7. Versão do Windows (`winver`) e se há outro antivírus além do Defender.
+7. **Passo 4c:** qual item, a hora em que ligou o PC, se a cápsula apareceu sem abrir nada, o
+   último contato em `/admin/dispositivos` e como estava o Ápice Gestor na aba Inicializar do
+   Gerenciador de Tarefas (Habilitado/Desabilitado).
+8. Versão do Windows (`winver`) e se há outro antivírus além do Defender.
 
 ---
 

@@ -8,10 +8,13 @@
       powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1
       powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1 -Desinstalar
 
-  Instalar tem duas etapas:
+  Instalar tem três partes:
     1. Máquina (administrador; o script pede o UAC sozinho): WebView2 se faltar, o .msi em
        silêncio e a exceção no Defender. Pode ser autorizada com a senha da TI.
-    2. Enrolamento (SEM elevação, no usuário da sessão): pede o código gerado no Hub e chama
+    2. Início automático (SEM elevação): registra o Gestor em HKCU\...\Run do colaborador, para
+       ele abrir ao entrar no Windows sem ninguém abrir nada. Se a pessoa desativou no
+       Gerenciador de Tarefas, respeita e não religa (decisão do José Luiz, 09/10).
+    3. Enrolamento (SEM elevação, no usuário da sessão): pede o código gerado no Hub e chama
        "apice-gestor.exe --enrolar <código>". O token vai para o Credential Manager DO USUÁRIO que
        roda esta etapa; por isso ela nunca roda como a conta da TI.
 
@@ -23,7 +26,8 @@
     - código inválido/expirado/usado: NUNCA é reenviado, nem se digitarem de novo; pede código novo;
     - no máximo UMA chamada automática por código; repetir é sempre decisão de quem instala.
 
-  Desinstalar remove o app e a exceção no Defender e PRESERVA o token (reinstalar não gasta outro
+  Desinstalar remove o app, a exceção no Defender e o início automático (a marca de "desativado"
+  do Gerenciador de Tarefas fica, para valer numa reinstalação) e PRESERVA o token (reinstalar não gasta outro
   código). -RemoverToken apaga o token também.
 
   Não precisa de domínio nem de Microsoft 365. Não grava código nem token em log.
@@ -343,26 +347,68 @@ function RemoverTokenDoUsuario {
     else { Escrever 'Token removido. Para usar de novo, será preciso um código novo.' 'Green' }
 }
 
-# O autostart do app (tauri-plugin-autostart) grava um valor em HKCU\...\Run na conta do
-# colaborador; o msiexec /x não sabe dele. Procura pelo executável, não pelo nome do valor.
-function RemoverAutostartDoUsuario {
-    $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-    $chave = Get-ItemProperty -Path $run -ErrorAction SilentlyContinue
-    if (-not $chave) { return }
-    foreach ($v in $chave.PSObject.Properties) {
-        if ($v.Name -notlike 'PS*' -and [string]$v.Value -like '*apice-gestor.exe*') {
-            Remove-ItemProperty -Path $run -Name $v.Name
-            Escrever "Autostart removido ($($v.Name))." 'Green'
+# --- Início automático (HKCU\Run do usuário da sessão) -----------------------------------------
+# O app usa o tauri-plugin-autostart 2.7 (auto-launch 0.6): valor em HKCU\...\Run com o NOME do app
+# (package_info().name = productName "Ápice Gestor") e o dado "<exe> --sessao". Se a pessoa
+# desativa em Gerenciador de Tarefas → Inicializar, o Windows grava o mesmo nome em
+# ...\Explorer\StartupApproved\Run com os 8 últimos bytes ≠ 0 (o mesmo critério do auto-launch).
+# Decisão do José Luiz (09/10): o instalador RESPEITA essa desativação e não religa.
+$ChaveRun      = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$ChaveAprovado = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+$ArgsSessao    = '--sessao'
+
+function NomesNoRun {
+    # Valores do Run que apontam para o apice-gestor.exe (o nome pode não ser o esperado).
+    $nomes = @()
+    $chave = Get-Item -Path $ChaveRun -ErrorAction SilentlyContinue
+    if ($chave) {
+        foreach ($n in $chave.GetValueNames()) {
+            if ([string]$chave.GetValue($n) -like '*apice-gestor.exe*') { $nomes += $n }
         }
+    }
+    return @($nomes)
+}
+
+function DesativadoPeloUsuario([string]$nome) {
+    $chave = Get-Item -Path $ChaveAprovado -ErrorAction SilentlyContinue
+    if (-not $chave) { return $false }
+    $bytes = $chave.GetValue($nome)
+    if (-not ($bytes -is [byte[]]) -or $bytes.Length -lt 8) { return $false }
+    return [bool]($bytes[-8..-1] | Where-Object { $_ -ne 0 })
+}
+
+function RegistrarAutostartDoUsuario {
+    $existentes = NomesNoRun
+    $nome = if ($existentes) { $existentes[0] } else { $NomeApp }
+    if (DesativadoPeloUsuario $nome) {
+        Escrever "Início automático: desativado por quem usa o PC (Gerenciador de Tarefas). Respeitado, não religo." 'Yellow'
+        return
+    }
+    if ($existentes) {
+        Escrever 'Início automático: já registrado.'
+        return
+    }
+    if (-not (Test-Path $ChaveRun)) { New-Item -Path $ChaveRun -Force | Out-Null }
+    New-ItemProperty -Path $ChaveRun -Name $nome -PropertyType String -Value "`"$Exe`" $ArgsSessao" -Force | Out-Null
+    Escrever 'Início automático: registrado (o Gestor abre sozinho ao entrar no Windows).' 'Green'
+}
+
+# Remove o valor do Run (o msiexec /x não sabe dele). A marca de "desativado" em StartupApproved
+# fica: é escolha de quem usa o PC e tem que valer numa reinstalação.
+function RemoverAutostartDoUsuario {
+    foreach ($n in (NomesNoRun)) {
+        Remove-ItemProperty -Path $ChaveRun -Name $n
+        Escrever "Início automático removido ($n)." 'Green'
     }
 }
 
-function SessaoEhDesteUsuario {
+function SessaoEhDesteUsuario([switch]$Calado) {
     # Se este PowerShell está elevado como OUTRA conta (a da TI), o token iria para a conta errada.
     if (-not (EhAdmin)) { return $true }
     $sessao = (Get-CimInstance Win32_ComputerSystem).UserName      # DOMINIO\usuario da sessão aberta
     $eu = "$env:USERDOMAIN\$env:USERNAME"
     if ($sessao -and ($sessao -ne $eu)) {
+        if ($Calado) { return $false }
         Write-Host "Este PowerShell roda como $eu, mas a sessão aberta é de $sessao." -ForegroundColor Red
         Write-Host 'O token é da conta da sessão. Rode de novo como o colaborador, sem "Executar como administrador".' -ForegroundColor Red
         return $false
@@ -423,6 +469,13 @@ if (EhAdmin) {
 } else {
     Write-Host 'Pedindo permissão de administrador para instalar...' -ForegroundColor Cyan
     if ((RelancarElevado 'Maquina' @('-Msi', "`"$Msi`"")) -ne 0) { Write-Host "A etapa da máquina falhou (veja $PastaLog\instalar.log)." -ForegroundColor Red; exit 1 }
+}
+
+# Início automático e token são da conta da sessão: nunca gravar na conta da TI.
+if (SessaoEhDesteUsuario -Calado) {
+    RegistrarAutostartDoUsuario
+} else {
+    Escrever 'Início automático: NÃO registrado (este PowerShell não é o do colaborador). Rode o script de novo na conta dele.' 'Yellow'
 }
 
 if ($SemEnrolar) { exit 0 }
