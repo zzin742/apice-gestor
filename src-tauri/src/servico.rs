@@ -24,6 +24,7 @@ pub fn executar() -> Result<(), String> {
 #[cfg(windows)]
 mod windows {
     use std::ffi::OsString;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
     use std::sync::Arc;
     use std::time::Duration;
@@ -59,11 +60,16 @@ mod windows {
     fn corpo() -> windows_service::Result<()> {
         crate::diario::registrar("serviço iniciando");
         let (parar_tx, parar_rx) = mpsc::channel();
+        // H3: compartilhado com o lançador da cápsula. No STOP, ele encerra a cápsula que lançou,
+        // senão o .exe fica preso e o próximo .msi (upgrade) tromba em arquivo em uso.
+        let parando = Arc::new(AtomicBool::new(false));
 
+        let parando_handler = parando.clone();
         let handler = move |evento| -> ServiceControlHandlerResult {
             match evento {
                 ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
                 ServiceControl::Stop => {
+                    parando_handler.store(true, Ordering::SeqCst);
                     let _ = parar_tx.send(());
                     ServiceControlHandlerResult::NoError
                 }
@@ -97,8 +103,12 @@ mod windows {
                 rt.spawn(bloqueio::rodar(api.clone()));
                 // 4/4: mantém a cápsula viva na sessão do usuário (com o token DELE), fora do
                 // runtime async — FFI síncrono do WTS/CreateProcessAsUser numa thread dedicada.
+                let mut lancador = None;
                 if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
-                    std::thread::spawn(move || crate::sessao::lancar_loop(dir.join("apice-gestor.exe")));
+                    let parando_lanc = parando.clone();
+                    lancador = Some(std::thread::spawn(move || {
+                        crate::sessao::lancar_loop(dir.join("apice-gestor.exe"), parando_lanc)
+                    }));
                 }
                 // D2: dados da MÁQUINA (mesma pasta do cofre, ACL fechada), não app_local_data_dir.
                 match crate::cofre::pasta_dados() {
@@ -117,6 +127,11 @@ mod windows {
                 }
                 // Bloqueia até o STOP. Ao retornar, o runtime é dropado e as tasks encerram.
                 let _ = parar_rx.recv();
+                // H3: espera o lançador encerrar a cápsula ANTES de o serviço reportar Stopped —
+                // assim o .exe não fica em uso para o próximo .msi.
+                if let Some(h) = lancador {
+                    let _ = h.join();
+                }
             }
             Err(e) => crate::diario::registrar(&format!("runtime async não iniciou: {e}")),
         }
