@@ -129,6 +129,8 @@ jobs:
           $h = (Get-FileHash "instalador/$nome" -Algorithm SHA256).Hash.ToLower()
           # LF explícito: com CRLF, o `sha256sum -c` do Mac/Linux não acha o arquivo.
           [IO.File]::WriteAllText("$PWD/instalador/SHA256SUMS.txt", "$h  $nome`n")
+          # Pacote de UM CLIQUE: o .msi, o hash e os dois scripts na mesma pasta.
+          Copy-Item scripts/instalar.ps1, scripts/instalar.cmd instalador/
           "### $nome`n`nSHA-256 ``$h```n`nGerado de ``$($msi[0].Name)``. Sem assinatura — só para Parallels/bancada." >> $env:GITHUB_STEP_SUMMARY
 
       # Roda o scripts/instalar.ps1 de verdade com o .msi recém-gerado (o runner é administrador):
@@ -136,6 +138,8 @@ jobs:
       # fica de fora: precisa do Hub e de alguém digitando o código.
       - name: Teste do instalar.ps1 (instala com serviço, repete, recuperação, desinstala)
         shell: powershell
+        env:
+          EVENTO: ${{ github.event_name }}
         run: |
           $s   = (Resolve-Path scripts/instalar.ps1).Path
           $msi = (Get-ChildItem instalador/*.msi)[0].FullName
@@ -153,7 +157,7 @@ jobs:
           New-ItemProperty -Path $run -Name $nome -Value "`"$exe`" --sessao" -Force | Out-Null
           & $s -Msi $msi -SemEnrolar
           if ($LASTEXITCODE -ne 0) { throw "instalar falhou ($LASTEXITCODE)" }
-          if (-not (Test-Path $exe)) { throw "exe não instalado em $exe" }
+          if (-not (Test-Path $exe)) { throw "exe nao instalado em $exe" }
           # O .msi traz o serviço? (tabela ServiceInstall; hoje não, até o serviço virar crate próprio)
           $wi = New-Object -ComObject WindowsInstaller.Installer
           $db = $wi.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $wi, @($msi, 0))
@@ -162,25 +166,25 @@ jobs:
             $vw.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $vw, $null) | Out-Null
             $temServico = $null -ne $vw.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $vw, $null)
           } catch { $temServico = $false }
-          ".msi com serviço: $temServico"
+          ".msi com servico: $temServico"
 
           if ($temServico) {
             $v = Svc
-            if (-not $v) { throw 'serviço ApiceGestor não foi criado pelo .msi' }
-            "serviço: $($v.State) / $($v.StartMode) / $($v.StartName) / $($v.PathName)"
-            if ($v.State -ne 'Running' -or $v.StartMode -ne 'Auto' -or $v.StartName -ne 'LocalSystem') { throw 'serviço fora do esperado' }
-            if ($v.PathName -notlike '*apice-gestor-servico.exe*') { throw "binário do serviço errado: $($v.PathName)" }
-            if ($null -ne (NoRun)) { throw 'Run legado ficou com o serviço instalado' }
+            if (-not $v) { throw 'servico ApiceGestor nao foi criado pelo .msi' }
+            "servico: $($v.State) / $($v.StartMode) / $($v.StartName) / $($v.PathName)"
+            if ($v.State -ne 'Running' -or $v.StartMode -ne 'Auto' -or $v.StartName -ne 'LocalSystem') { throw 'servico fora do esperado' }
+            if ($v.PathName -notlike '*apice-gestor-servico.exe*') { throw "binario do servico errado: $($v.PathName)" }
+            if ($null -ne (NoRun)) { throw 'Run legado ficou com o servico instalado' }
           } else {
-            if (Svc) { throw 'serviço criado por um .msi que não o declara' }
-            if ((NoRun) -ne "`"$exe`" --sessao") { throw "sem serviço, o Run tinha que ficar: '$(NoRun)'" }
+            if (Svc) { throw 'servico criado por um .msi que nao o declara' }
+            if ((NoRun) -ne "`"$exe`" --sessao") { throw "sem servico, o Run tinha que ficar: '$(NoRun)'" }
           }
 
           # 2. Repete: nada a fazer, e o Run continua fora.
           & $s -Msi $msi -SemEnrolar
-          if ($LASTEXITCODE -ne 0) { throw "segunda execução falhou ($LASTEXITCODE)" }
-          if (-not (Select-String -Path $log -Pattern 'nada a fazer' -Quiet)) { throw 'segunda execução reinstalou: não é idempotente' }
-          if ($temServico -and $null -ne (NoRun)) { throw 'Run regravado com o serviço instalado' }
+          if ($LASTEXITCODE -ne 0) { throw "segunda execucao falhou ($LASTEXITCODE)" }
+          if (-not (Select-String -Path $log -Pattern 'nada a fazer' -Quiet)) { throw 'segunda execucao reinstalou: nao e idempotente' }
+          if ($temServico -and $null -ne (NoRun)) { throw 'Run regravado com o servico instalado' }
 
           # 2b. Cofre da máquina: com um device.token presente, instalar SEM -SemEnrolar tem que
           #     reconhecer a máquina como enrolada (etapa elevada) e não pedir código (o CI não tem Hub).
@@ -188,7 +192,14 @@ jobs:
           Set-Content -LiteralPath $cofre -Value 'token-de-teste-do-CI'
           & $s -Msi $msi
           if ($LASTEXITCODE -ne 0) { throw "instalar com cofre presente falhou ($LASTEXITCODE)" }
-          if (-not (Select-String -Path $log -Pattern 'enrolada \(cofre' -Quiet)) { throw 'não reconheceu o cofre da máquina' }
+          if (-not (Select-String -Path $log -Pattern 'enrolada \(cofre' -Quiet)) { throw 'nao reconheceu o cofre da maquina' }
+          # Um clique com a máquina já enrolada: não gasta o código.
+          & $s -Msi $msi -Codigo 'TESTE-CI-0001'
+          if ($LASTEXITCODE -ne 0) { throw "-Codigo com cofre presente devia sair 0 ($LASTEXITCODE)" }
+          if (Select-String -Path $log -Pattern 'uma tentativa com o c' -Quiet) { throw '-Codigo tentou enrolar uma maquina ja enrolada' }
+          # Código com formato inválido: recusa antes de tudo (saída 2), sem instalar nem chamar o exe.
+          & $s -Msi $msi -Codigo 'x y;z'
+          if ($LASTEXITCODE -ne 2) { throw "codigo com formato invalido devia sair 2 ($LASTEXITCODE)" }
 
           # 3. Recuperação: matar o processo do serviço → o Windows sobe de novo (reinicia em 60 s).
           if ($temServico) {
@@ -196,8 +207,8 @@ jobs:
           Stop-Process -Id $pid1 -Force
           $ok = $false
           foreach ($i in 1..24) { Start-Sleep 5; $v = Svc; if ($v.State -eq 'Running' -and $v.ProcessId -ne $pid1) { $ok = $true; break } }
-          if (-not $ok) { throw "o serviço não voltou em 120 s depois de morto (estado: $((Svc).State))" }
-          "serviço voltou sozinho: pid $pid1 → $((Svc).ProcessId)"
+          if (-not $ok) { throw "o servico nao voltou em 120 s depois de morto (estado: $((Svc).State))" }
+          "servico voltou sozinho: pid $pid1 -> $((Svc).ProcessId)"
           }
 
           # 3b. ATUALIZAÇÃO (H3): segundo .msi (ProductCode novo) por cima, com o serviço rodando e uma
@@ -213,43 +224,91 @@ jobs:
             $rec2 = $vw2.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $vw2, $null)
             $pc2 = $rec2.GetType().InvokeMember('StringData', 'GetProperty', $null, $rec2, 1)
             $vw2.GetType().InvokeMember('Close', 'InvokeMethod', $null, $vw2, $null) | Out-Null
-            if ((Svc).State -ne 'Running') { throw 'antes da atualização o serviço tinha que estar rodando' }
-            Start-Process -FilePath $exe | Out-Null    # cápsula aberta durante a troca
+            if ((Svc).State -ne 'Running') { throw 'antes da atualizacao o servico tinha que estar rodando' }
+            Start-Process -FilePath $exe | Out-Null    # capsula aberta durante a troca
             Start-Sleep 3
             $antes = @(Get-Content $log).Count
             & $s -Msi $msi2 -SemEnrolar
-            if ($LASTEXITCODE -ne 0) { throw "atualização falhou ($LASTEXITCODE)" }
+            if ($LASTEXITCODE -ne 0) { throw "atualizacao falhou ($LASTEXITCODE)" }
             $novas = @(Get-Content $log | Select-Object -Skip $antes)
             $novas
-            if (-not ($novas -match 'substituindo')) { throw 'não foi uma atualização (esperava "substituindo")' }
-            if ($novas -match 'rein.{1,2}cio') { throw 'atualização pediu reinício: arquivo em uso (H3)' }
+            if (-not ($novas -match 'substituindo')) { throw 'nao foi uma atualizacao (esperava "substituindo")' }
+            if ($novas -match 'rein.{1,2}cio') { throw 'atualizacao pediu reinicio: arquivo em uso (H3)' }
             $v = Svc
-            if ($v.State -ne 'Running') { throw "serviço não voltou depois da atualização ($($v.State))" }
+            if ($v.State -ne 'Running') { throw "servico nao voltou depois da atualizacao ($($v.State))" }
             $wi3 = New-Object -ComObject WindowsInstaller.Installer
             $inst = @($wi3.GetType().InvokeMember('RelatedProducts', 'GetProperty', $null, $wi3, @('{97800A68-CABD-52E3-886A-6D8831965CFF}')))
-            if ($inst.Count -ne 1 -or $inst[0] -ne $pc2) { throw "depois da atualização, produtos instalados: $($inst -join ', ') (esperado só $pc2)" }
-            "atualização ok: ProductCode $pc2, serviço Running"
+            if ($inst.Count -ne 1 -or $inst[0] -ne $pc2) { throw "depois da atualizacao, produtos instalados: $($inst -join ', ') (esperado so $pc2)" }
+            "atualizacao ok: ProductCode $pc2, servico Running"
           }
 
           # 4. Desinstala: some o serviço, o exe e o Run.
           & $s -Desinstalar
           if ($LASTEXITCODE -ne 0) { throw "desinstalar falhou ($LASTEXITCODE)" }
-          if (Test-Path $exe) { throw 'exe continua lá depois de desinstalar' }
-          if (Svc) { throw 'serviço continua lá depois de desinstalar' }
-          if ($null -ne (NoRun)) { throw 'início automático ficou em HKCU\Run' }
+          if (Test-Path $exe) { throw 'exe continua la depois de desinstalar' }
+          if (Svc) { throw 'servico continua la depois de desinstalar' }
+          if ($null -ne (NoRun)) { throw 'inicio automatico ficou em HKCU\Run' }
           # Token preservado por padrão; -RemoverToken apaga o cofre.
           if (-not (Test-Path -LiteralPath $cofre)) { throw 'desinstalar sem -RemoverToken apagou o cofre' }
           & $s -Desinstalar -RemoverToken
           if ($LASTEXITCODE -ne 0) { throw "desinstalar -RemoverToken falhou ($LASTEXITCODE)" }
-          if (Test-Path -LiteralPath $cofre) { throw '-RemoverToken não apagou o cofre' }
+          if (Test-Path -LiteralPath $cofre) { throw '-RemoverToken nao apagou o cofre' }
+
+          # 4b. UM CLIQUE do zero (-Codigo), só em build sem endereço (push): instala, sobe o serviço,
+          #     tenta enrolar UMA vez e sai 4 (sem conexão: "endereço não configurado"), sem perguntar
+          #     nada e sem o código no log. Em workflow_dispatch o .msi fala com o Hub de produção, e o
+          #     CI nunca manda código falso para lá.
+          if ($env:EVENTO -ne 'workflow_dispatch') {
+            $antes = @(Get-Content $log).Count
+            # O instalar.cmd DO PACOTE, como no PC: o código entra pelo teclado (aqui, um pipe), vai
+            # ao script pela variável APICE_CODIGO (só o --enrolar ainda o recebe como argumento, L1). O runner já é
+            # administrador, então o .cmd não se relança.
+            cmd /c "(echo TESTE-CI-0002& echo.) | instalador\instalar.cmd"
+            $rc = $LASTEXITCODE
+            $novas = @(Get-Content $log | Select-Object -Skip $antes)
+            $novas
+            if ($rc -ne 4) { throw "um clique sem endereco devia sair 4 (sem conexao), saiu $rc" }
+            if (@($novas -match 'uma tentativa com o c').Count -ne 1) { throw 'um clique nao fez exatamente UMA tentativa' }
+            if (Select-String -Path $log -Pattern 'TESTE-CI-000' -Quiet) { throw 'o codigo apareceu no log' }
+            if ((Svc).State -ne 'Running') { throw 'um clique nao deixou o servico rodando' }
+            # Mensagem do --enrolar lida em UTF-8: nada de acento quebrado no log ("Ã§", "Ã£"...).
+            # Padrão = Ã seguido de ¡..¿, com distinção de caixa (sem ela, "Ã" casaria o "ã" de "não").
+            # Montado com [char] porque este passo é lido como ANSI pelo Windows PowerShell 5.1.
+            # Diagnostico (nao reprova): o que a busca antiga, sem distincao de caixa, casava; os A-til
+            # maiusculos; e U+FFFD (linha gravada em ANSI e lida como UTF-8). Mostra a origem de cada um.
+            # Regex com \uXXXX (comparacao caractere a caractere). -SimpleMatch compara pelas regras de
+            # idioma do .NET Framework: ignora caixa (A-til casava o a-til minusculo) e trata U+FFFD como
+            # ignoravel (casava TODA linha). Os dois falsos positivos apareceram nas runs 38408819072 e
+            # 38411042494.
+            $antiga = @(Select-String -Path $log -Encoding UTF8 -Pattern '\u00C3')
+            "diagnostico: busca antiga (sem caixa) casou $($antiga.Count) linha(s):"
+            $antiga | ForEach-Object { "  L$($_.LineNumber): $($_.Line)" }
+            $maiusc = @(Select-String -Path $log -Encoding UTF8 -Pattern '\u00C3' -CaseSensitive)
+            "diagnostico: A-til MAIUSCULO em $($maiusc.Count) linha(s):"
+            $maiusc | ForEach-Object { "  L$($_.LineNumber): $($_.Line)" }
+            $fffd = @(Select-String -Path $log -Encoding UTF8 -Pattern '\uFFFD' -CaseSensitive)
+            "diagnostico: U+FFFD (gravado em ANSI) em $($fffd.Count) linha(s):"
+            $fffd | ForEach-Object { "  L$($_.LineNumber): $($_.Line)" }
+            # Reprova: a sequencia do acento quebrado (A-til + ¡..¿, com caixa) ou qualquer U+FFFD.
+            $quebrado = '\u00C3[\u00A1-\u00BF]'
+            $ruins = @(Select-String -Path $log -Encoding UTF8 -CaseSensitive -Pattern $quebrado)
+            if ($ruins -or $fffd) {
+              $ruins | ForEach-Object { "acento quebrado L$($_.LineNumber): $($_.Line)" }
+              throw 'texto com acento quebrado no instalar.log (ver as linhas acima)'
+            }
+            if (Test-Path -LiteralPath $cofre) { throw 'cofre gravado sem enrolar' }
+            & $s -Desinstalar
+            if ($LASTEXITCODE -ne 0 -or (Svc)) { throw 'desinstalar depois do um clique falhou' }
+            "um clique (instalar.cmd) ok: instalou, servico Running, uma tentativa, saida 4, codigo fora do log"
+          }
 
           # 5. Serviço órfão (MSI antigo ou falha no meio): o -Desinstalar tem que apagá-lo, mesmo sem
           #    app instalado. O binário é qualquer um: o serviço nem chega a iniciar.
           & sc.exe create ApiceGestor binPath= "C:\Windows\System32\cmd.exe /c exit" start= demand | Out-Null
-          if (-not (Get-Service ApiceGestor -ErrorAction SilentlyContinue)) { throw 'não consegui criar o serviço de teste' }
+          if (-not (Get-Service ApiceGestor -ErrorAction SilentlyContinue)) { throw 'nao consegui criar o servico de teste' }
           & $s -Desinstalar
           if ($LASTEXITCODE -ne 0) { throw "desinstalar 2x falhou ($LASTEXITCODE)" }
-          if (Get-Service ApiceGestor -ErrorAction SilentlyContinue) { throw 'serviço órfão continua lá' }
+          if (Get-Service ApiceGestor -ErrorAction SilentlyContinue) { throw 'servico orfao continua la' }
           "--- instalar.log ---"; Get-Content $log
 
       - uses: actions/upload-artifact@v6
@@ -258,6 +317,8 @@ jobs:
           path: |
             instalador/*.msi
             instalador/SHA256SUMS.txt
+            instalador/instalar.ps1
+            instalador/instalar.cmd
           if-no-files-found: error
           retention-days: 14
 
@@ -278,7 +339,7 @@ jobs:
           $tokens = $null; $erros = $null
           [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$tokens, [ref]$erros) | Out-Null
           if ($erros) { $erros | ForEach-Object { "::error file=$f,line=$($_.Extent.StartLineNumber)::$($_.Message)" }; exit 1 }
-          if ((Get-Content $f -Raw -Encoding UTF8) -notmatch [char]0x00C1) { throw 'Acentos não lidos como UTF-8' }
+          if ((Get-Content $f -Raw -Encoding UTF8) -notmatch [char]0x00C1) { throw 'Acentos nao lidos como UTF-8' }
           "Windows PowerShell $($PSVersionTable.PSVersion): sintaxe ok"
 
       - name: PSScriptAnalyzer

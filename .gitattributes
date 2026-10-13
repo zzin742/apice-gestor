@@ -1,0 +1,2 @@
+# O instalar.cmd roda no cmd.exe do Windows: CRLF sempre, em qualquer checkout.
+*.cmd text eol=crlf
