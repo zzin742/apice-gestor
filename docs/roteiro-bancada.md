@@ -119,8 +119,8 @@ SYSTEM e Administradores** (nada de "Usuários", "Users" ou do nome do Vinny).
 **Não rode o `--enrolar` duas vezes "para garantir".** O código é de uso único e o escritório
 inteiro divide o limite de 10 tentativas por minuto.
 
-*Ainda NÃO use o `instalar.ps1` nesta bancada:* ele está sendo atualizado para o cofre da máquina
-(o enrolamento dele ainda é o antigo).
+*Nesta bancada, use o caminho manual acima, não o `instalar.ps1`:* o script já enrola no cofre da
+máquina (feat/servico 49bd92a), mas a rodada 1 quer ver cada passo separado.
 
 ## 4. Conferir o painel (sem abrir nada: o serviço abre a cápsula)
 
@@ -243,3 +243,124 @@ Mande para o Vigia, com foto da tela quando ajudar:
 7. **Passo 5:** o item, a hora, a saída do comando, e as **últimas linhas do `servico.log`** no
    mesmo minuto (`Get-Content "$env:ProgramData\ApiceGestor\servico.log" -Tail 30`).
 8. Versão do Windows (`winver`) e se há outro antivírus além do Defender.
+
+---
+
+# RODADA 2 — desligar e bloquear (só quando o Vigia avisar)
+
+> **Não faça antes do aviso do Vigia.** Depende do lado do Hub (Farol) estar em produção:
+> `/admin/maquinas` com o desligar (contrato §8) e a lista de bloqueio (contrato §9). Vale para o
+> **.msi da rodada 2**, que o Vigia indica (pode não ser o da rodada 1). **Não precisa de código de
+> enrolamento novo:** a máquina já está enrolada desde a rodada 1. José Luiz presente, como sempre.
+> Tudo no PowerShell **de administrador**, a não ser onde diz o contrário. O diário é o
+> `%ProgramData%\ApiceGestor\servico.log`. Para acompanhar ao vivo durante os testes:
+> `Get-Content "$env:ProgramData\ApiceGestor\servico.log" -Wait -Tail 5`.
+
+## 8. Desligar pelo Hub (contrato §8)
+
+**Como o admin desliga:** em `https://www.apicehub.com.br/admin/maquinas`, selecionar **a máquina
+do Vinny** (a ordem é por máquina, não por pessoa: o PC do Vinny está vinculado ao José) e
+**Desligar**. O histórico da ordem fica na mesma tela (pendente → reivindicada → executada /
+falhou / vencida).
+
+**O que o PC faz:** o serviço consulta as ordens a cada ~60 s, **reivindica** a ordem no Hub e só
+então desliga, sem aviso na tela. Antes de desligar, grava o id da ordem em
+`%ProgramData%\ApiceGestor\comandos-executados.json` (id gravado nunca roda de novo). No
+`servico.log` aparecem `ordem cmd_… reivindicada` e `ordem cmd_… executada (desligando)`.
+
+- [ ] **1. Desliga:** admin manda desligar. **Esperado:** o PC apaga em **até ~1 min, sem aviso**.
+      Anote a hora em que o admin apertou e a hora em que apagou.
+- [ ] **2. Não volta a desligar (o laço de junho):** ligue o PC de novo e entre no Windows (o
+      serviço e a cápsula sobem sozinhos). **Esperado:** **não** desliga. Espere 3 min. **Repita 3
+      vezes** (desligar pelo admin só na primeira; nas outras, só ligar e esperar). No `servico.log`,
+      a ordem aparece **uma vez** como executada. No Hub, a ordem fica **executada** depois do
+      primeiro heartbeat pós-boot.
+- [ ] **3. Ordem antiga não vale (vence em 5 min):** desligue o PC **pelo menu Iniciar**. Com ele
+      desligado, o admin manda desligar. Espere **10 min** e ligue. **Esperado:** **não** desliga; no
+      Hub a ordem aparece **vencida**.
+- [ ] **4. Inicialização Rápida (trava b, critério 7):** confira que está **ligada** (Painel de
+      Controle → Opções de Energia → *Escolher a função dos botões de energia* → "Ligar
+      inicialização rápida" marcado). Desligue **pelo menu Iniciar**, o admin manda a ordem, e
+      ligue o PC **em até 2 min**. **Esperado:** **não** desliga. *(É o caso mais delicado: com a
+      Inicialização Rápida, o serviço pode "acordar" em vez de reiniciar. Se desligar aqui, pare a
+      rodada e avise o Vigia na hora.)*
+- [ ] **5. Duas vezes = uma:** com o PC ligado, o admin manda desligar **duas vezes seguidas**.
+      **Esperado:** desliga **uma vez**; ao ligar de novo, **não** desliga. No Hub, uma ordem só.
+- [ ] **6. Sem rede = não desliga:** desconecte o cabo/Wi-Fi do PC. O admin manda desligar. Espere
+      **6 min** (a ordem vence) e reconecte. **Esperado:** **não** desliga; no Hub, **vencida**.
+      *(O caso exato de cair a rede entre a consulta e a reivindicação não dá para provocar à mão:
+      fica para o teste de código do Chassi.)*
+- [ ] **7. Sem conseguir gravar o id = não desliga (trava c, critério 8):** trave a escrita do
+      serviço no arquivo e mande a ordem:
+      ```powershell
+      $f = "$env:ProgramData\ApiceGestor\comandos-executados.json"
+      if (-not (Test-Path $f)) { Set-Content $f '[]' }
+      icacls $f /deny "NT AUTHORITY\SYSTEM:(W)"
+      ```
+      Admin manda desligar. **Esperado:** **não** desliga; `servico.log` com `ordem cmd_… abortada:
+      falha ao gravar o id`; no Hub, **falhou**. Depois, destrave:
+      `icacls $f /remove:d "NT AUTHORITY\SYSTEM"`.
+
+**Se falhar, anote:** item, hora do aperto no Hub, hora em que apagou (ou não), o estado da ordem no
+Hub e as linhas de `ordem cmd_…` do `servico.log`.
+
+## 9. Bloqueio de aplicativo (contrato §9)
+
+**Como o admin bloqueia:** em `/admin/maquinas`, na **máquina do Vinny**, adicionar um item à lista
+de bloqueio. Todo item precisa de **critério forte**: nome **e** caminho (`name_and_path`), nome
+**e** editor, ou caminho exato. **Nome sozinho é recusado.** O serviço busca a lista a cada ~2 min
+e fecha o app que casar, quando abre e também se já estiver aberto. No `servico.log`:
+`bloqueio blk_… <nome> terminated` (ou `refused_protected`). **Nunca** aparece a lista do que a
+pessoa abre, só o que casou.
+
+**App de teste** (na conta do Vinny, PowerShell normal):
+
+```powershell
+Copy-Item C:\Windows\System32\notepad.exe "$env:USERPROFILE\Desktop\bloco-notas-copia.exe"
+"$env:USERPROFILE\Desktop\bloco-notas-copia.exe"   # anote este caminho completo para o admin
+```
+
+Abra a cópia uma vez para ver que funciona. Se não abrir, use outro `.exe` portátil qualquer e
+anote qual.
+
+- [ ] **1. Bloqueia:** admin adiciona `bloco-notas-copia.exe` com **`name_and_path`** e o caminho
+      anotado. Espere até 2 min e abra a cópia. **Esperado:** o app **fecha sozinho em segundos**;
+      reabrir → fecha de novo. `servico.log` com `terminated`; no Hub, o histórico da máquina mostra
+      o bloqueio.
+- [ ] **2. Já aberto também fecha:** com o item ainda na lista, peça ao admin para tirá-lo, abra a
+      cópia, e peça para pôr de volta. **Esperado:** em até 2 min a cópia aberta fecha.
+- [ ] **3. Desbloqueia:** admin **tira** o item. Espere até 2 min. **Esperado:** a cópia **abre e
+      fica** aberta.
+- [ ] **4. Protegido é recusado:** o admin tenta bloquear `explorer.exe`, o próprio Ápice Gestor
+      (`apice-gestor.exe` / `apice-gestor-servico.exe`) e o antivírus (`MsMpEng.exe`). **Esperado:**
+      o **Hub recusa** cada um (erro de alvo protegido). Na máquina nada fecha. *(Se, por algum
+      caminho, um protegido chegar à lista, o serviço não o encerra e o `servico.log` mostra
+      `refused_protected`.)*
+- [ ] **5. Só nome é recusado:** o admin tenta um item só com o nome (ex.: `notepad.exe`, sem
+      caminho nem editor). **Esperado:** o **Hub recusa**. Na máquina, o Bloco de Notas normal abre
+      e fica.
+- [ ] **6. Sessão 0 nunca é encerrada (trava E3):** com a cópia **bloqueada** de novo (item 1),
+      rode a mesma cópia **como serviço do sistema** (Sessão 0), por uma tarefa agendada:
+      ```powershell
+      $exe = "$env:USERPROFILE\Desktop\bloco-notas-copia.exe"
+      schtasks /create /tn ApiceTesteE3 /tr "`"$exe`"" /sc once /st 23:59 /ru SYSTEM /f
+      schtasks /run /tn ApiceTesteE3
+      Start-Sleep 180
+      Get-Process bloco-notas-copia -IncludeUserName | Format-Table Id, SessionId, UserName
+      ```
+      **Esperado:** depois de 3 min, o processo **da Sessão 0** (`SessionId` 0, `UserName` SYSTEM)
+      **continua vivo**: o serviço só avalia processos de sessão de usuário. Abrir a cópia pela área
+      de trabalho, ao mesmo tempo, continua **fechando** (item 1). Limpeza:
+      `Stop-Process -Name bloco-notas-copia -Force; schtasks /delete /tn ApiceTesteE3 /f`.
+- [ ] **7. Bloqueio desligado:** o admin põe o intervalo da lista em **0** para esta máquina
+      (`blocklist_poll_interval_seconds = 0`). Espere até 5 min. **Esperado:** a cópia **abre e fica**,
+      mesmo com o item na lista. Depois, o admin volta o intervalo para o normal.
+- [ ] **8. Relatório é só bloqueio:** no histórico da máquina em `/admin/maquinas`, só aparecem os
+      bloqueios (e recusas) dos itens da lista, **nunca** os outros programas que o Vinny abriu
+      durante o teste (navegador, Bloco de Notas normal…).
+
+**No fim:** o admin tira os itens de teste da lista; apague a cópia da Área de Trabalho.
+
+**Se falhar, anote:** item, o que foi cadastrado no Hub (nome, critério, caminho), a resposta do
+Hub, as linhas `bloqueio …` do `servico.log` e o `Get-Process … -IncludeUserName` do momento.
+
