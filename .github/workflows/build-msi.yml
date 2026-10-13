@@ -260,7 +260,10 @@ jobs:
           #     CI nunca manda código falso para lá.
           if ($env:EVENTO -ne 'workflow_dispatch') {
             $antes = @(Get-Content $log).Count
-            & $s -Msi $msi -Codigo 'TESTE-CI-0002'
+            # O instalar.cmd DO PACOTE, como no PC: o código entra pelo teclado (aqui, um pipe), vai
+            # ao script pela variável APICE_CODIGO e nunca por linha de comando. O runner já é
+            # administrador, então o .cmd não se relança.
+            cmd /c "(echo TESTE-CI-0002& echo.) | instalador\instalar.cmd"
             $rc = $LASTEXITCODE
             $novas = @(Get-Content $log | Select-Object -Skip $antes)
             $novas
@@ -271,7 +274,7 @@ jobs:
             if (Test-Path -LiteralPath $cofre) { throw 'cofre gravado sem enrolar' }
             & $s -Desinstalar
             if ($LASTEXITCODE -ne 0 -or (Svc)) { throw 'desinstalar depois do um clique falhou' }
-            "um clique ok: instalou, serviço Running, uma tentativa, saída 4, código fora do log"
+            "um clique (instalar.cmd) ok: instalou, serviço Running, uma tentativa, saída 4, código fora do log"
           }
 
           # 5. Serviço órfão (MSI antigo ou falha no meio): o -Desinstalar tem que apagá-lo, mesmo sem

@@ -62,13 +62,15 @@ Saia dessa conta e volte para a do Vinny.
 
 **2.2. O clique.** Na pasta do pacote, **dois cliques no `instalar.cmd`**:
 
-1. Ele pede o **código de enrolamento**: digite e Enter.
-2. O Windows pede **permissão de administrador** (UAC): **Sim**. (Pode aparecer o aviso de
+1. O Windows pede **permissão de administrador** (UAC): **Sim**. (Pode aparecer o aviso de
    "editor desconhecido": o app não é assinado, decisão do José Luiz; siga.)
-3. Uma janela de administrador faz tudo sozinha: confere o hash, cria a **exceção do Defender** (só
-   a pasta do app), instala o `.msi`, sobe o **serviço**, e **enrola** com o código (uma tentativa
-   só).
-4. No fim, a janela do `instalar.cmd` mostra **PRONTO** ou **NÃO concluiu (saída N)**.
+2. Abre uma janela de administrador que pede o **código de enrolamento**: digite e Enter. O código
+   **não** fica em log, nem em histórico, nem em linha de comando.
+3. A janela faz tudo sozinha: confere o hash, cria a **exceção do Defender** (só a pasta do app),
+   instala o `.msi`, sobe o **serviço** e **enrola** com o código (uma tentativa só).
+4. Logo depois de enrolar, o serviço **reinicia** para ler o token: a cápsula **pisca** (some e
+   volta em segundos). **É normal, não é falha.**
+5. No fim, a janela mostra **PRONTO** ou **NÃO concluiu (saída N)**. Tecle algo para fechar.
 
 | Saída | Quer dizer | O que fazer |
 |---|---|---|
@@ -153,8 +155,8 @@ $p = Start-Process $exe -ArgumentList '--enrolar','TESTE-0000' -Wait -PassThru -
       `$f.Close()`.
 - [ ] **4. Sem elevação:** num PowerShell **normal** (sem administrador), o mesmo comando com
       `TESTE-0000`. **Esperado:** falha (saída diferente de 0), **nada gravado**, painel funcionando.
-- [ ] **5. Só o serviço lê:** `Restart-Service ApiceGestor`. **Esperado:** último contato novo em
-      `/admin/dispositivos` e a cápsula volta com as tarefas; o usuário comum continua sem ler o
+- [ ] **5. Só o serviço lê:** `Restart-Service ApiceGestor` (a cápsula pisca: normal). **Esperado:**
+      último contato novo em `/admin/dispositivos` e a cápsula volta com as tarefas; o usuário comum continua sem ler o
       `device.token`.
 
 ### 5B. Cápsula lançada pelo serviço (W6 1–9 + H5 + parar o serviço)

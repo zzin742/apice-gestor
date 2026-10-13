@@ -8,10 +8,17 @@
       powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1
       powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1 -Desinstalar
 
-  UM CLIQUE (bancada e rollout): instalar.cmd ao lado do .msi; ele pede o código uma vez e chama
-      instalar.ps1 -Codigo <código>
-  que, numa só execução elevada, instala o .msi, cria a exceção no Defender (só a pasta do app),
-  sobe o serviço e enrola com o código (uma tentativa, sem perguntar nada).
+  UM CLIQUE (bancada e rollout): dois cliques no instalar.cmd ao lado do .msi. Ele se eleva (UAC),
+  pede o código UMA vez e chama este script, que numa só execução elevada instala o .msi, cria a
+  exceção no Defender (só a pasta do app), sobe o serviço e enrola com o código (uma tentativa,
+  sem perguntar mais nada).
+
+  O CÓDIGO NUNCA VAI PARA LOG NEM HISTÓRICO: o instalar.cmd o entrega pela variável de ambiente
+  APICE_CODIGO (lida e apagada aqui), não pela linha de comando. -Codigo existe para automação,
+  mas, digitado no PowerShell, fica no histórico do PSReadLine
+  (%APPDATA%\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt): prefira o
+  instalar.cmd, ou apague a linha desse arquivo depois. Rodando sem elevação com -Codigo, o código
+  também vai na linha de comando da instância elevada (visível só para administradores).
 
   Instalar tem três partes:
     1. Máquina (administrador; o script pede o UAC sozinho): WebView2 se faltar, o .msi em
@@ -556,6 +563,12 @@ function SessaoEhDesteUsuario([switch]$Calado) {
 }
 
 # --- Fluxo -----------------------------------------------------------------------------------
+# O instalar.cmd entrega o código por APICE_CODIGO (nunca em linha de comando nem em histórico):
+# lê e apaga do ambiente na hora.
+if (-not $Codigo -and $env:APICE_CODIGO) {
+    $Codigo = $env:APICE_CODIGO
+    Remove-Item Env:APICE_CODIGO -ErrorAction SilentlyContinue
+}
 if ($Codigo) {
     $Codigo = $Codigo.Trim()
     # Formato antes de qualquer coisa (e antes do UAC): o código vai como argumento do --enrolar.
