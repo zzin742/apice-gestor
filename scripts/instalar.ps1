@@ -419,7 +419,8 @@ function TentarCodigo([string]$codigo) {
     try {
         $p = Start-Process -FilePath $Exe -ArgumentList '--enrolar', $codigo -Wait -PassThru -NoNewWindow `
             -RedirectStandardOutput $saida -RedirectStandardError $erros
-        $texto = Get-Content $saida -Raw -ErrorAction SilentlyContinue
+        # O --enrolar escreve em UTF-8; o Windows PowerShell 5.1 leria como ANSI ("EndereÃ§o").
+        $texto = Get-Content $saida -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
         if ($texto) { $texto = $texto.Trim() }
     } finally {
         Remove-Item $saida, $erros -Force -ErrorAction SilentlyContinue
