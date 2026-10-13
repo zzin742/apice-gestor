@@ -10,15 +10,21 @@ Qualquer passo que der diferente do esperado: **pare, anote (seção 9) e não t
 ## O que você recebe
 
 O **pacote de um clique**, artefato da **run manual do build-msi** que o Vigia indicou:
-**run [__RUN__](__URL__)** (`__COMMIT__`). Baixe o `.zip` da seção *Artifacts* da run e extraia
+**run [38416900183](https://github.com/zzin742/apice-gestor/actions/runs/38416900183)**
+(`feat/servico` `7c3fb92`), artefato `apice-gestor-msi-7c3fb92ad50d52672ae4b1b8527779ad428a9200-com-api`. Baixe o `.zip` da seção *Artifacts* da run e extraia
 numa pasta (ex.: `C:\ApiceBancada`). Dentro:
 
 | Arquivo | O que é |
 |---|---|
 | `apice-gestor_0.1.0_x64.msi` | o app + o **serviço do Windows** "Ápice Gestor" (SYSTEM, início automático), falando com o Hub de produção (`https://www.apicehub.com.br/api/gestor`) |
-| `SHA256SUMS.txt` | o hash do `.msi` (o instalador confere sozinho). SHA-256 esperado: `__SHA__` |
-| `instalar.cmd` | **o um clique** |
-| `instalar.ps1` | o instalador que o `instalar.cmd` chama |
+| `SHA256SUMS.txt` | o hash do `.msi` (o instalador confere sozinho). SHA-256 do `.msi`: `23cef5b5c36487455b5ae4066f895397a82bf80b43bf457edc195f6841d68141` |
+| `instalar.cmd` | **o um clique**. SHA-256: `a595fe6e6be3de7f45a1f6a24da773848f23ad9b25b9f9943b620e9ece9eb135` |
+| `instalar.ps1` | o instalador que o `instalar.cmd` chama. SHA-256: `7ba3bf9534300b7335b51a70bec851e19a279bb974d1d5100e5a69b0d62e5208` |
+
+Para conferir os arquivos depois de extrair (PowerShell, na pasta):
+`Get-FileHash .\* -Algorithm SHA256 | Format-Table Hash, Path`. Os SHA dos dois scripts são **os do
+pacote** (com quebra de linha do Windows); calculados direto do repositório dão outro número, e
+isso é esperado.
 
 E **um código de enrolamento**, gerado pelo José Luiz em
 `https://www.apicehub.com.br/admin/dispositivos` (24 h, uso único, aparece uma vez só: anote em
