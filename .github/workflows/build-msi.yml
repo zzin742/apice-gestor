@@ -106,6 +106,13 @@ jobs:
             "::endgroup::"
             exit 1
           }
+          # Guarda o .msi da run e empacota DE NOVO (mesmo ambiente, sem recompilar): o WiX gera outro
+          # ProductCode, e o teste usa o segundo .msi para uma atualização de verdade (H3, 4/4).
+          New-Item -ItemType Directory -Force msi-1, msi-2 | Out-Null
+          Move-Item src-tauri/target/release/bundle/msi/*.msi msi-1/
+          npx tauri build --bundles msi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Move-Item src-tauri/target/release/bundle/msi/*.msi msi-2/
 
       # O tauri-bundler nomeia o .msi como "{productName}_{versão}_{arch}_{idioma}.msi", com acento
       # e espaço ("Ápice Gestor_..."), e não oferece opção de config. Aqui ele vira um nome ASCII
@@ -113,8 +120,8 @@ jobs:
       - name: Renomeia e calcula SHA-256
         shell: pwsh
         run: |
-          $msi = @(Get-ChildItem src-tauri/target/release/bundle/msi/*.msi)
-          if ($msi.Count -ne 1) { throw "Esperava 1 .msi em src-tauri/target/release/bundle/msi, achei $($msi.Count)" }
+          $msi = @(Get-ChildItem msi-1/*.msi)
+          if ($msi.Count -ne 1) { throw "Esperava 1 .msi em msi-1, achei $($msi.Count)" }
           $versao = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
           $nome = "apice-gestor_${versao}_x64.msi"
           New-Item -ItemType Directory -Force instalador | Out-Null
@@ -183,6 +190,37 @@ jobs:
           foreach ($i in 1..24) { Start-Sleep 5; $v = Svc; if ($v.State -eq 'Running' -and $v.ProcessId -ne $pid1) { $ok = $true; break } }
           if (-not $ok) { throw "o serviço não voltou em 120 s depois de morto (estado: $((Svc).State))" }
           "serviço voltou sozinho: pid $pid1 → $((Svc).ProcessId)"
+          }
+
+          # 3b. ATUALIZAÇÃO (H3): segundo .msi (ProductCode novo) por cima, com o serviço rodando e uma
+          #     cápsula aberta. Tem que instalar sem "pede reinício" (arquivo em uso) e o serviço tem
+          #     que terminar rodando, do pacote novo. (O runner não tem sessão interativa: o serviço não
+          #     relança a cápsula aqui; isso só a bancada prova.)
+          if ($temServico) {
+            $msi2 = (Get-ChildItem msi-2/*.msi)[0].FullName
+            $wi2 = New-Object -ComObject WindowsInstaller.Installer
+            $db2 = $wi2.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $wi2, @($msi2, 0))
+            $vw2 = $db2.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db2, @("SELECT Value FROM Property WHERE Property='ProductCode'"))
+            $vw2.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $vw2, $null) | Out-Null
+            $rec2 = $vw2.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $vw2, $null)
+            $pc2 = $rec2.GetType().InvokeMember('StringData', 'GetProperty', $null, $rec2, 1)
+            $vw2.GetType().InvokeMember('Close', 'InvokeMethod', $null, $vw2, $null) | Out-Null
+            if ((Svc).State -ne 'Running') { throw 'antes da atualização o serviço tinha que estar rodando' }
+            Start-Process -FilePath $exe | Out-Null    # cápsula aberta durante a troca
+            Start-Sleep 3
+            $antes = @(Get-Content $log).Count
+            & $s -Msi $msi2 -SemEnrolar
+            if ($LASTEXITCODE -ne 0) { throw "atualização falhou ($LASTEXITCODE)" }
+            $novas = @(Get-Content $log | Select-Object -Skip $antes)
+            $novas
+            if (-not ($novas -match 'substituindo')) { throw 'não foi uma atualização (esperava "substituindo")' }
+            if ($novas -match 'rein.{1,2}cio') { throw 'atualização pediu reinício: arquivo em uso (H3)' }
+            $v = Svc
+            if ($v.State -ne 'Running') { throw "serviço não voltou depois da atualização ($($v.State))" }
+            $wi3 = New-Object -ComObject WindowsInstaller.Installer
+            $inst = @($wi3.GetType().InvokeMember('RelatedProducts', 'GetProperty', $null, $wi3, @('{97800A68-CABD-52E3-886A-6D8831965CFF}')))
+            if ($inst.Count -ne 1 -or $inst[0] -ne $pc2) { throw "depois da atualização, produtos instalados: $($inst -join ', ') (esperado só $pc2)" }
+            "atualização ok: ProductCode $pc2, serviço Running"
           }
 
           # 4. Desinstala: some o serviço, o exe e o Run.
