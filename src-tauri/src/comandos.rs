@@ -19,12 +19,49 @@ const INTERVALO_MINIMO: u64 = 30;
 const INTERVALO_DESLIGADO: u64 = 300;
 /// §8.6 (d): vivo este tempo depois de mandar desligar = a sequência falhou.
 const ESPERA_DESLIGAR: Duration = Duration::from_secs(60);
+/// J1: salto do tempo suspenso entre voltas que conta como "o PC dormiu/hibernou".
+const SALTO_SUSPENSAO: Duration = Duration::from_secs(120);
 
 pub async fn rodar(api: Arc<Api>, data_dir: PathBuf) {
+    // J1: rede de segurança contra a corrida na retomada — o POWEREVENT pode chegar DEPOIS desta
+    // volta. O tempo suspenso acumulado (QueryInterruptTime − QueryUnbiasedInterruptTime) cresce
+    // quando o PC dorme/hiberna; se saltou mais que o limiar desde a volta anterior, houve
+    // suspensão → rezera o relógio da trava (b) ANTES de avaliar a ordem.
+    let mut suspenso_antes = suspensao_acumulada();
     loop {
+        if let (Some(antes), Some(agora)) = (suspenso_antes, suspensao_acumulada()) {
+            if agora.saturating_sub(antes) > SALTO_SUSPENSAO {
+                desligar::marcar_inicio();
+                crate::diario::registrar("suspensão detectada no laço de ordens; relógio da trava (b) zerado");
+            }
+        }
+        suspenso_antes = suspensao_acumulada();
         let intervalo = ciclo(&api, &data_dir).await;
         tokio::time::sleep(Duration::from_secs(intervalo)).await;
     }
+}
+
+/// Tempo total que o PC passou suspenso desde o boot (QueryInterruptTime inclui suspensão;
+/// QueryUnbiasedInterruptTime exclui; a diferença é o suspenso). Detector do J1, não âncora.
+#[cfg(windows)]
+fn suspensao_acumulada() -> Option<Duration> {
+    use windows_sys::Win32::System::WindowsProgramming::{
+        QueryInterruptTime, QueryUnbiasedInterruptTime,
+    };
+    let (mut com, mut sem): (u64, u64) = (0, 0);
+    unsafe {
+        QueryInterruptTime(&mut com);
+        if QueryUnbiasedInterruptTime(&mut sem) == 0 {
+            return None;
+        }
+    }
+    // Unidades de 100 ns.
+    Some(Duration::from_nanos(com.saturating_sub(sem).saturating_mul(100)))
+}
+
+#[cfg(not(windows))]
+fn suspensao_acumulada() -> Option<Duration> {
+    None
 }
 
 /// Uma volta do laço. Devolve quantos segundos dormir até a próxima.
