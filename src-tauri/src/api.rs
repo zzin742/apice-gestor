@@ -256,6 +256,17 @@ pub struct Enrolado {
 /// Não repete nada sozinho; quem decide repetir é o chamador (`enrolar.rs`).
 pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
     let base = base_url().ok_or_else(sem_endereco)?;
+    // Confere a escrita no cofre ANTES de consumir o código (uso único): sem elevação, falha aqui
+    // e o código continua válido para a próxima tentativa.
+    crate::cofre::ensaio().map_err(|e| {
+        if let crate::cofre::ErroCofre::Falha(motivo) = &e {
+            eprintln!("cofre: {motivo}");
+        }
+        ErroApi::novo(
+            "server_error",
+            "Não foi possível proteger o cofre; execute o enrolamento como administrador.",
+        )
+    })?;
     let resposta = Api::new()
         .cliente
         .post(format!("{base}/enroll"))

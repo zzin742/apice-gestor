@@ -83,6 +83,29 @@ pub fn gravar(token: &str) -> Result<(), ErroCofre> {
     Ok(())
 }
 
+/// Prova, ANTES de consumir o código no Hub, que dá para proteger a pasta e escrever no cofre
+/// (precisa de elevação). Sem isso, um --enrolar sem admin consumiria o código e só falharia ao
+/// gravar. Cria a pasta com a ACL e escreve/apaga um arquivo de teste; não toca no device.token.
+pub fn ensaio() -> Result<(), ErroCofre> {
+    let pasta = pasta()?;
+    std::fs::create_dir_all(&pasta).map_err(|e| ErroCofre::Falha(e.to_string()))?;
+    #[cfg(windows)]
+    fechar_acl(&pasta, false)?;
+    let probe = pasta.join("device.token.probe");
+    let _ = std::fs::remove_file(&probe);
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .map_err(|e| ErroCofre::Falha(format!("sem escrita no cofre: {e}")))?;
+        f.write_all(b"ok").map_err(|e| ErroCofre::Falha(e.to_string()))?;
+    }
+    let _ = std::fs::remove_file(&probe);
+    Ok(())
+}
+
 /// Lê o token. `NaoEnrolado` se o arquivo não existe.
 pub fn ler() -> Result<String, ErroCofre> {
     let caminho = caminho()?;
