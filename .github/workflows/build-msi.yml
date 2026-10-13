@@ -182,6 +182,14 @@ jobs:
           if (-not (Select-String -Path $log -Pattern 'nada a fazer' -Quiet)) { throw 'segunda execução reinstalou: não é idempotente' }
           if ($temServico -and $null -ne (NoRun)) { throw 'Run regravado com o serviço instalado' }
 
+          # 2b. Cofre da máquina: com um device.token presente, instalar SEM -SemEnrolar tem que
+          #     reconhecer a máquina como enrolada (etapa elevada) e não pedir código (o CI não tem Hub).
+          $cofre = Join-Path $env:ProgramData 'ApiceGestor\device.token'
+          Set-Content -LiteralPath $cofre -Value 'token-de-teste-do-CI'
+          & $s -Msi $msi
+          if ($LASTEXITCODE -ne 0) { throw "instalar com cofre presente falhou ($LASTEXITCODE)" }
+          if (-not (Select-String -Path $log -Pattern 'enrolada \(cofre' -Quiet)) { throw 'não reconheceu o cofre da máquina' }
+
           # 3. Recuperação: matar o processo do serviço → o Windows sobe de novo (reinicia em 60 s).
           if ($temServico) {
           $pid1 = (Svc).ProcessId
@@ -229,6 +237,11 @@ jobs:
           if (Test-Path $exe) { throw 'exe continua lá depois de desinstalar' }
           if (Svc) { throw 'serviço continua lá depois de desinstalar' }
           if ($null -ne (NoRun)) { throw 'início automático ficou em HKCU\Run' }
+          # Token preservado por padrão; -RemoverToken apaga o cofre.
+          if (-not (Test-Path -LiteralPath $cofre)) { throw 'desinstalar sem -RemoverToken apagou o cofre' }
+          & $s -Desinstalar -RemoverToken
+          if ($LASTEXITCODE -ne 0) { throw "desinstalar -RemoverToken falhou ($LASTEXITCODE)" }
+          if (Test-Path -LiteralPath $cofre) { throw '-RemoverToken não apagou o cofre' }
 
           # 5. Serviço órfão (MSI antigo ou falha no meio): o -Desinstalar tem que apagá-lo, mesmo sem
           #    app instalado. O binário é qualquer um: o serviço nem chega a iniciar.
