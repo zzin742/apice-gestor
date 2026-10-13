@@ -271,8 +271,12 @@ jobs:
             if (@($novas -match 'uma tentativa com o c').Count -ne 1) { throw 'um clique não fez exatamente UMA tentativa' }
             if (Select-String -Path $log -Pattern 'TESTE-CI-000' -Quiet) { throw 'o código apareceu no log' }
             if ((Svc).State -ne 'Running') { throw 'um clique não deixou o serviço rodando' }
-            # Mensagem do --enrolar lida em UTF-8 (sem "Ã§" no log).
-            if (Get-Content $log -Encoding UTF8 | Select-String -SimpleMatch ([string][char]0x00C3) -Quiet) { throw 'texto com acento quebrado (UTF-8 lido como ANSI) no instalar.log' }
+            # Mensagem do --enrolar lida em UTF-8: nada de acento quebrado no log ("Ã§", "Ã£"...).
+            # Padrão = Ã seguido de ¡..¿, com distinção de caixa (sem ela, "Ã" casaria o "ã" de "não").
+            # Montado com [char] porque este passo é lido como ANSI pelo Windows PowerShell 5.1.
+            $quebrado = [string][char]0x00C3 + '[' + [char]0x00A1 + '-' + [char]0x00BF + ']'
+            $ruins = @(Get-Content $log -Encoding UTF8 | Select-String -CaseSensitive -Pattern $quebrado)
+            if ($ruins) { $ruins | ForEach-Object { "acento quebrado: $($_.Line)" }; throw 'texto com acento quebrado (UTF-8 lido como ANSI) no instalar.log' }
             if (Test-Path -LiteralPath $cofre) { throw 'cofre gravado sem enrolar' }
             & $s -Desinstalar
             if ($LASTEXITCODE -ne 0 -or (Svc)) { throw 'desinstalar depois do um clique falhou' }
