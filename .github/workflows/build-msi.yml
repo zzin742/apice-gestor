@@ -276,18 +276,21 @@ jobs:
             # Montado com [char] porque este passo é lido como ANSI pelo Windows PowerShell 5.1.
             # Diagnostico (nao reprova): o que a busca antiga, sem distincao de caixa, casava; os A-til
             # maiusculos; e U+FFFD (linha gravada em ANSI e lida como UTF-8). Mostra a origem de cada um.
-            $atil = [string][char]0x00C3
-            $antiga = @(Select-String -Path $log -Encoding UTF8 -SimpleMatch $atil)
+            # Regex com \uXXXX (comparacao caractere a caractere). -SimpleMatch compara pelas regras de
+            # idioma do .NET Framework: ignora caixa (A-til casava o a-til minusculo) e trata U+FFFD como
+            # ignoravel (casava TODA linha). Os dois falsos positivos apareceram nas runs 38408819072 e
+            # 38411042494.
+            $antiga = @(Select-String -Path $log -Encoding UTF8 -Pattern '\u00C3')
             "diagnostico: busca antiga (sem caixa) casou $($antiga.Count) linha(s):"
             $antiga | ForEach-Object { "  L$($_.LineNumber): $($_.Line)" }
-            $maiusc = @(Select-String -Path $log -Encoding UTF8 -SimpleMatch $atil -CaseSensitive)
+            $maiusc = @(Select-String -Path $log -Encoding UTF8 -Pattern '\u00C3' -CaseSensitive)
             "diagnostico: A-til MAIUSCULO em $($maiusc.Count) linha(s):"
             $maiusc | ForEach-Object { "  L$($_.LineNumber): $($_.Line)" }
-            $fffd = @(Select-String -Path $log -Encoding UTF8 -SimpleMatch ([string][char]0xFFFD))
+            $fffd = @(Select-String -Path $log -Encoding UTF8 -Pattern '\uFFFD' -CaseSensitive)
             "diagnostico: U+FFFD (gravado em ANSI) em $($fffd.Count) linha(s):"
             $fffd | ForEach-Object { "  L$($_.LineNumber): $($_.Line)" }
             # Reprova: a sequencia do acento quebrado (A-til + ¡..¿, com caixa) ou qualquer U+FFFD.
-            $quebrado = $atil + '[' + [char]0x00A1 + '-' + [char]0x00BF + ']'
+            $quebrado = '\u00C3[\u00A1-\u00BF]'
             $ruins = @(Select-String -Path $log -Encoding UTF8 -CaseSensitive -Pattern $quebrado)
             if ($ruins -or $fffd) {
               $ruins | ForEach-Object { "acento quebrado L$($_.LineNumber): $($_.Line)" }
