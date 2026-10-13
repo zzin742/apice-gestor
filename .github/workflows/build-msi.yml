@@ -129,6 +129,8 @@ jobs:
           $h = (Get-FileHash "instalador/$nome" -Algorithm SHA256).Hash.ToLower()
           # LF explícito: com CRLF, o `sha256sum -c` do Mac/Linux não acha o arquivo.
           [IO.File]::WriteAllText("$PWD/instalador/SHA256SUMS.txt", "$h  $nome`n")
+          # Pacote de UM CLIQUE: o .msi, o hash e os dois scripts na mesma pasta.
+          Copy-Item scripts/instalar.ps1, scripts/instalar.cmd instalador/
           "### $nome`n`nSHA-256 ``$h```n`nGerado de ``$($msi[0].Name)``. Sem assinatura — só para Parallels/bancada." >> $env:GITHUB_STEP_SUMMARY
 
       # Roda o scripts/instalar.ps1 de verdade com o .msi recém-gerado (o runner é administrador):
@@ -136,6 +138,8 @@ jobs:
       # fica de fora: precisa do Hub e de alguém digitando o código.
       - name: Teste do instalar.ps1 (instala com serviço, repete, recuperação, desinstala)
         shell: powershell
+        env:
+          EVENTO: ${{ github.event_name }}
         run: |
           $s   = (Resolve-Path scripts/instalar.ps1).Path
           $msi = (Get-ChildItem instalador/*.msi)[0].FullName
@@ -189,6 +193,13 @@ jobs:
           & $s -Msi $msi
           if ($LASTEXITCODE -ne 0) { throw "instalar com cofre presente falhou ($LASTEXITCODE)" }
           if (-not (Select-String -Path $log -Pattern 'enrolada \(cofre' -Quiet)) { throw 'não reconheceu o cofre da máquina' }
+          # Um clique com a máquina já enrolada: não gasta o código.
+          & $s -Msi $msi -Codigo 'TESTE-CI-0001'
+          if ($LASTEXITCODE -ne 0) { throw "-Codigo com cofre presente devia sair 0 ($LASTEXITCODE)" }
+          if (Select-String -Path $log -Pattern 'uma tentativa com o c' -Quiet) { throw '-Codigo tentou enrolar uma máquina já enrolada' }
+          # Código com formato inválido: recusa antes de tudo (saída 2), sem instalar nem chamar o exe.
+          & $s -Msi $msi -Codigo 'x y;z'
+          if ($LASTEXITCODE -ne 2) { throw "código com formato inválido devia sair 2 ($LASTEXITCODE)" }
 
           # 3. Recuperação: matar o processo do serviço → o Windows sobe de novo (reinicia em 60 s).
           if ($temServico) {
@@ -243,6 +254,26 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "desinstalar -RemoverToken falhou ($LASTEXITCODE)" }
           if (Test-Path -LiteralPath $cofre) { throw '-RemoverToken não apagou o cofre' }
 
+          # 4b. UM CLIQUE do zero (-Codigo), só em build sem endereço (push): instala, sobe o serviço,
+          #     tenta enrolar UMA vez e sai 4 (sem conexão: "endereço não configurado"), sem perguntar
+          #     nada e sem o código no log. Em workflow_dispatch o .msi fala com o Hub de produção, e o
+          #     CI nunca manda código falso para lá.
+          if ($env:EVENTO -ne 'workflow_dispatch') {
+            $antes = @(Get-Content $log).Count
+            & $s -Msi $msi -Codigo 'TESTE-CI-0002'
+            $rc = $LASTEXITCODE
+            $novas = @(Get-Content $log | Select-Object -Skip $antes)
+            $novas
+            if ($rc -ne 4) { throw "um clique sem endereço devia sair 4 (sem conexão), saiu $rc" }
+            if (@($novas -match 'uma tentativa com o c').Count -ne 1) { throw 'um clique não fez exatamente UMA tentativa' }
+            if (Select-String -Path $log -Pattern 'TESTE-CI-000' -Quiet) { throw 'o código apareceu no log' }
+            if ((Svc).State -ne 'Running') { throw 'um clique não deixou o serviço rodando' }
+            if (Test-Path -LiteralPath $cofre) { throw 'cofre gravado sem enrolar' }
+            & $s -Desinstalar
+            if ($LASTEXITCODE -ne 0 -or (Svc)) { throw 'desinstalar depois do um clique falhou' }
+            "um clique ok: instalou, serviço Running, uma tentativa, saída 4, código fora do log"
+          }
+
           # 5. Serviço órfão (MSI antigo ou falha no meio): o -Desinstalar tem que apagá-lo, mesmo sem
           #    app instalado. O binário é qualquer um: o serviço nem chega a iniciar.
           & sc.exe create ApiceGestor binPath= "C:\Windows\System32\cmd.exe /c exit" start= demand | Out-Null
@@ -258,6 +289,8 @@ jobs:
           path: |
             instalador/*.msi
             instalador/SHA256SUMS.txt
+            instalador/instalar.ps1
+            instalador/instalar.cmd
           if-no-files-found: error
           retention-days: 14
 

@@ -8,6 +8,11 @@
       powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1
       powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1 -Desinstalar
 
+  UM CLIQUE (bancada e rollout): instalar.cmd ao lado do .msi; ele pede o código uma vez e chama
+      instalar.ps1 -Codigo <código>
+  que, numa só execução elevada, instala o .msi, cria a exceção no Defender (só a pasta do app),
+  sobe o serviço e enrola com o código (uma tentativa, sem perguntar nada).
+
   Instalar tem três partes:
     1. Máquina (administrador; o script pede o UAC sozinho): WebView2 se faltar, o .msi em
        silêncio e a exceção no Defender. Pode ser autorizada com a senha da TI.
@@ -48,7 +53,8 @@
 
 .NOTES
   Salvo em UTF-8 COM BOM: sem BOM o Windows PowerShell 5.1 lê como ANSI e estraga os acentos.
-  Saídas: 0 ok · 1 erro na etapa da máquina · 2 enrolamento não concluído.
+  Saídas: 0 ok · 1 erro na etapa da máquina · 2 código recusado (inválido/expirado/usado, ou
+  formato inválido) · 3 limite de tentativas · 4 sem conexão com o Hub · 5 outro erro no enrolamento.
 #>
 [CmdletBinding()]
 param(
@@ -57,6 +63,9 @@ param(
     [switch]$SemEnrolar,
     [switch]$Desinstalar,
     [switch]$RemoverToken,
+    # Um clique: código de enrolamento de /admin/dispositivos. Uma tentativa só, sem perguntar nada.
+    # NUNCA escrever um código em arquivo do repo: é parâmetro de quem instala.
+    [string]$Codigo,
     # Interno: o script se relança elevado só para a parte que precisa de administrador.
     [ValidateSet('Tudo', 'Maquina', 'Remocao')]
     [string]$Etapa = 'Tudo'
@@ -391,64 +400,70 @@ function EtapaRemocao {
 # Antes do cofre, rodava fora da elevação e gravava no Credential Manager do usuário; agora o
 # --enrolar sem elevação falha (não consegue fechar a ACL da pasta). As 3 regras do rate limit valem
 # igual.
+# Saídas do enrolamento (iguais às do --enrolar, e as do script com -Codigo):
+#   0 enrolado (ou já estava) · 2 código recusado · 3 limite de tentativas · 4 sem conexão · 5 outro
+$SaidaCodigoRecusado = 2
+
+# Uma chamada ao --enrolar com um código. O 429 é esperado dentro do executável (até 3x, teto 300 s).
+# Nunca escreve o código em log nem na tela.
+function TentarCodigo([string]$codigo) {
+    $saida = Join-Path $env:TEMP "apice-enrolar-$PID.txt"
+    $erros = Join-Path $env:TEMP "apice-enrolar-$PID-err.txt"
+    try {
+        $p = Start-Process -FilePath $Exe -ArgumentList '--enrolar', $codigo -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $saida -RedirectStandardError $erros
+        $texto = Get-Content $saida -Raw -ErrorAction SilentlyContinue
+        if ($texto) { $texto = $texto.Trim() }
+    } finally {
+        Remove-Item $saida, $erros -Force -ErrorAction SilentlyContinue
+    }
+    switch ($p.ExitCode) {
+        0 {
+            Escrever "Enrolado: $texto" 'Green'
+            # O serviço lê o cofre ao subir: reinicia para ele pegar o token novo agora.
+            if (InfoServico) {
+                Restart-Service -Name $Servico -Force -ErrorAction SilentlyContinue
+                Escrever 'Serviço reiniciado para ler o token novo.'
+            }
+            return 0
+        }
+        2 { Escrever 'Código recusado pelo Hub (inválido, expirado ou já usado). Gere um código NOVO em /admin/dispositivos; este não será tentado de novo.' 'Red'; return 2 }
+        3 { Escrever 'Limite de tentativas do escritório atingido (muitos PCs ao mesmo tempo). Espere uns 5 minutos e rode de novo com o MESMO código: ele ainda vale.' 'Red'; return 3 }
+        4 { Escrever "Sem conexão com o Hub ($texto). Confira a rede e rode de novo com o mesmo código." 'Red'; return 4 }
+        default { Escrever "Erro no enrolamento (saída $($p.ExitCode)): $texto. Avise o responsável pelo piloto." 'Red'; return 5 }
+    }
+}
+
+# Devolve a saída (0 = enrolado). Com -Codigo: UMA tentativa, sem perguntar. Sem -Codigo: pergunta
+# na janela de administrador, e código recusado nunca é reenviado, nem se digitarem de novo.
 function Enrolar {
     Escrever '== Enrolamento ==' 'Cyan'
     if (-not (EhAdmin)) { throw 'O enrolamento precisa de administrador (cofre da máquina).' }
 
     if ((JaEnrolado) -and -not $Reenrolar) {
         Escrever 'Esta máquina já está enrolada (cofre da máquina). Para trocar o token: -Reenrolar' 'Green'
-        return $true
+        return 0
     }
 
-    $recusados = @{}   # códigos que o Hub recusou (saída 2): nunca reenviar
-    $saida = Join-Path $env:TEMP "apice-enrolar-$PID.txt"
-    $erros = Join-Path $env:TEMP "apice-enrolar-$PID-err.txt"
-    try {
-        while ($true) {
-            $codigo = ([string](Read-Host 'Código de enrolamento (gerado no Hub; Enter vazio para sair)')).Trim()
-            if (-not $codigo) { Escrever 'Enrolamento não feito. Rode o script de novo quando tiver o código.' 'Yellow'; return $false }
-            if ($recusados.ContainsKey($codigo.ToUpper())) {
-                Escrever 'Esse código já foi recusado pelo Hub. Peça um código NOVO ao admin.' 'Red'
-                continue
-            }
+    if ($Codigo) {
+        Escrever 'Enrolamento: uma tentativa com o código informado.'
+        return (TentarCodigo $Codigo)
+    }
 
-            # UMA chamada por código digitado. O 429 é esperado dentro do executável.
-            $p = Start-Process -FilePath $Exe -ArgumentList '--enrolar', $codigo -Wait -PassThru -NoNewWindow `
-                -RedirectStandardOutput $saida -RedirectStandardError $erros
-            $texto = Get-Content $saida -Raw -ErrorAction SilentlyContinue
-            if ($texto) { $texto = $texto.Trim() }
-
-            switch ($p.ExitCode) {
-                0 {
-                    Escrever "Enrolado: $texto" 'Green'
-                    # O serviço lê o cofre ao subir: reinicia para ele pegar o token novo agora.
-                    if (InfoServico) {
-                        Restart-Service -Name $Servico -Force -ErrorAction SilentlyContinue
-                        Escrever 'Serviço reiniciado para ler o token novo.'
-                    }
-                    return $true
-                }
-                2 {
-                    # invalid_code / code_expired / code_used
-                    Escrever 'Código inválido, expirado ou já usado. Peça um código NOVO ao admin do Hub.' 'Red'
-                    $recusados[$codigo.ToUpper()] = $true
-                }
-                3 {
-                    Escrever 'Limite de tentativas do escritório atingido (muitos PCs ao mesmo tempo).' 'Red'
-                    Escrever 'Espere uns 5 minutos e digite o código de novo. O mesmo código ainda vale.' 'Yellow'
-                }
-                4 {
-                    Escrever 'Sem conexão com o Hub. Confira a rede e digite o código de novo.' 'Red'
-                }
-                default {
-                    Escrever "Erro no enrolamento (saída $($p.ExitCode)): $texto. Avise o responsável pelo piloto." 'Red'
-                    return $false
-                }
-            }
+    $recusados = @{}
+    while ($true) {
+        $digitado = ([string](Read-Host 'Código de enrolamento (gerado no Hub; Enter vazio para sair)')).Trim()
+        if (-not $digitado) { Escrever 'Enrolamento não feito. Rode o script de novo quando tiver o código.' 'Yellow'; return 5 }
+        if ($digitado -notmatch '^[A-Za-z0-9-]{4,64}$') { Escrever 'Esse código não tem o formato esperado (letras, números e hífen).' 'Red'; continue }
+        if ($recusados.ContainsKey($digitado.ToUpper())) {
+            Escrever 'Esse código já foi recusado pelo Hub. Peça um código NOVO ao admin.' 'Red'
+            continue
         }
-    } finally {
-        Remove-Item $saida, $erros -Force -ErrorAction SilentlyContinue
-        $codigo = $null
+        $r = TentarCodigo $digitado
+        if ($r -eq 0) { return 0 }
+        if ($r -eq $SaidaCodigoRecusado) { $recusados[$digitado.ToUpper()] = $true; continue }
+        if ($r -in 3, 4) { continue }   # quem instala decide quando tentar de novo (mesmo código vale)
+        return $r
     }
 }
 
@@ -541,11 +556,20 @@ function SessaoEhDesteUsuario([switch]$Calado) {
 }
 
 # --- Fluxo -----------------------------------------------------------------------------------
+if ($Codigo) {
+    $Codigo = $Codigo.Trim()
+    # Formato antes de qualquer coisa (e antes do UAC): o código vai como argumento do --enrolar.
+    if ($Codigo -notmatch '^[A-Za-z0-9-]{4,64}$') { Write-Host 'Código com formato inválido (só letras, números e hífen).' -ForegroundColor Red; exit 2 }
+    if ($SemEnrolar) { Write-Host '-Codigo e -SemEnrolar juntos não fazem sentido.' -ForegroundColor Red; exit 5 }
+}
 # Instâncias elevadas: só a parte da máquina.
 if ($Etapa -eq 'Maquina') {
     try { EtapaMaquina (Resolve-Path $Msi).Path } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
     if ($SemEnrolar) { exit 0 }
-    if (Enrolar) { exit 0 } else { Read-Host 'Enrolamento não concluído. Enter para fechar' | Out-Null; exit 2 }
+    $r = Enrolar
+    # Sem -Codigo a janela de administrador é interativa: segura a mensagem antes de fechar.
+    if ($r -ne 0 -and -not $Codigo) { Read-Host 'Enrolamento não concluído. Enter para fechar' | Out-Null }
+    exit $r
 }
 if ($Etapa -eq 'Remocao') {
     try { EtapaRemocao; exit 0 } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
@@ -594,15 +618,26 @@ Unblock-File -Path $Msi -ErrorAction SilentlyContinue
 $saidaMaquina = 0
 if (EhAdmin) {
     try { EtapaMaquina $Msi } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
-    if (-not $SemEnrolar -and -not (Enrolar)) { $saidaMaquina = 2 }
+    if (-not $SemEnrolar) { $saidaMaquina = Enrolar }
 } else {
     Write-Host 'Pedindo permissão de administrador para instalar (o código de enrolamento é pedido na janela de administrador)...' -ForegroundColor Cyan
     $extras = @('-Msi', "`"$Msi`"")
     if ($SemEnrolar) { $extras += '-SemEnrolar' }
     if ($Reenrolar)  { $extras += '-Reenrolar' }
+    # O código vai na linha de comando da instância elevada (só administradores leem a linha de
+    # comando de um processo elevado); nunca em arquivo nem em log.
+    if ($Codigo)     { $extras += @('-Codigo', $Codigo) }
     $saidaMaquina = RelancarElevado 'Maquina' $extras
     if ($saidaMaquina -eq 1) { Write-Host "A etapa da máquina falhou (veja $PastaLog\instalar.log)." -ForegroundColor Red; exit 1 }
-    if ($saidaMaquina -eq 2) { Write-Host 'Instalado, mas o enrolamento não foi concluído. Rode o script de novo com um código válido.' -ForegroundColor Yellow }
+    if ($saidaMaquina -ne 0) {
+        $motivo = switch ($saidaMaquina) {
+            2 { 'código recusado: gere um código NOVO em /admin/dispositivos' }
+            3 { 'limite de tentativas: espere ~5 min e rode de novo com o mesmo código' }
+            4 { 'sem conexão com o Hub: confira a rede e rode de novo com o mesmo código' }
+            default { "erro no enrolamento (saída $saidaMaquina)" }
+        }
+        Write-Host "Instalado, mas NÃO enrolado: $motivo." -ForegroundColor Yellow
+    }
 }
 
 # Início automático e token são da conta da sessão: nunca gravar na conta da TI.
