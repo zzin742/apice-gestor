@@ -5,9 +5,11 @@ rem e de dois cliques. O Windows pede permissao de administrador UMA vez; depois
 rem enrolamento (gerado em /admin/dispositivos) UMA vez, e o resto e automatico: confere o hash,
 rem cria a excecao do Defender (so a pasta do app), instala, sobe o servico e enrola.
 rem
-rem O codigo NUNCA vai em linha de comando nem em historico: este arquivo se eleva ANTES de pedir o
-rem codigo e o entrega ao instalar.ps1 pela variavel de ambiente APICE_CODIGO, que o script le e
-rem apaga. Nunca grave um codigo dentro deste arquivo.
+rem O codigo nao vai para log nem historico, nem na linha de comando DESTE arquivo ou do PowerShell:
+rem este arquivo se eleva ANTES de pedir o codigo e o entrega ao instalar.ps1 pela variavel de
+rem ambiente APICE_CODIGO, que o script le e apaga. EXCECAO: o ultimo salto, apice-gestor.exe
+rem --enrolar <codigo>, ainda recebe o codigo como argumento (processo elevado, por segundos; ler
+rem de stdin/ambiente e correcao do Chassi pos-bancada, L1). Nunca grave um codigo neste arquivo.
 setlocal
 
 rem 1. Administrador? Se nao, relanca a si mesmo elevado (UAC) e sai.

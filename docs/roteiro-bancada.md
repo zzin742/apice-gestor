@@ -65,7 +65,8 @@ Saia dessa conta e volte para a do Vinny.
 1. O Windows pede **permissão de administrador** (UAC): **Sim**. (Pode aparecer o aviso de
    "editor desconhecido": o app não é assinado, decisão do José Luiz; siga.)
 2. Abre uma janela de administrador que pede o **código de enrolamento**: digite e Enter. O código
-   **não** fica em log, nem em histórico, nem em linha de comando.
+   **não** fica em log nem em histórico (só passa, por segundos, como argumento do app que enrola,
+   num processo de administrador).
 3. A janela faz tudo sozinha: confere o hash, cria a **exceção do Defender** (só a pasta do app),
    instala o `.msi`, sobe o **serviço** e **enrola** com o código (uma tentativa só).
 4. Logo depois de enrolar, o serviço **reinicia** para ler o token: a cápsula **pisca** (some e

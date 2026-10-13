@@ -261,7 +261,7 @@ jobs:
           if ($env:EVENTO -ne 'workflow_dispatch') {
             $antes = @(Get-Content $log).Count
             # O instalar.cmd DO PACOTE, como no PC: o código entra pelo teclado (aqui, um pipe), vai
-            # ao script pela variável APICE_CODIGO e nunca por linha de comando. O runner já é
+            # ao script pela variável APICE_CODIGO (só o --enrolar ainda o recebe como argumento, L1). O runner já é
             # administrador, então o .cmd não se relança.
             cmd /c "(echo TESTE-CI-0002& echo.) | instalador\instalar.cmd"
             $rc = $LASTEXITCODE

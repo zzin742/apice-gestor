@@ -13,8 +13,11 @@
   exceção no Defender (só a pasta do app), sobe o serviço e enrola com o código (uma tentativa,
   sem perguntar mais nada).
 
-  O CÓDIGO NUNCA VAI PARA LOG NEM HISTÓRICO: o instalar.cmd o entrega pela variável de ambiente
-  APICE_CODIGO (lida e apagada aqui), não pela linha de comando. -Codigo existe para automação,
+  O CÓDIGO NÃO VAI PARA LOG NEM HISTÓRICO: o instalar.cmd o entrega pela variável de ambiente
+  APICE_CODIGO (lida e apagada aqui), não pela linha de comando do .cmd nem a do PowerShell.
+  EXCEÇÃO: o último salto, "apice-gestor.exe --enrolar <código>", ainda recebe o código como
+  ARGUMENTO (processo elevado, vive segundos; só administradores leem a linha de comando dele). Ler
+  de stdin/ambiente é correção do --enrolar (Chassi, pós-bancada, L1). -Codigo existe para automação,
   mas, digitado no PowerShell, fica no histórico do PSReadLine
   (%APPDATA%\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt): prefira o
   instalar.cmd, ou apague a linha desse arquivo depois. Rodando sem elevação com -Codigo, o código
@@ -412,7 +415,8 @@ function EtapaRemocao {
 $SaidaCodigoRecusado = 2
 
 # Uma chamada ao --enrolar com um código. O 429 é esperado dentro do executável (até 3x, teto 300 s).
-# Nunca escreve o código em log nem na tela.
+# Nunca escreve o código em log nem na tela. Ressalva: o --enrolar recebe o código como argumento
+# (única linha de comando em que ele aparece; L1 do Chassi troca por stdin/ambiente).
 function TentarCodigo([string]$codigo) {
     $saida = Join-Path $env:TEMP "apice-enrolar-$PID.txt"
     $erros = Join-Path $env:TEMP "apice-enrolar-$PID-err.txt"
