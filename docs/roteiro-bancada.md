@@ -8,20 +8,28 @@ esperado: **pare, anote (seção 6) e não tente consertar**.
 
 ## O que você recebe
 
-- `apice-gestor_0.1.0_x64.msi` e `SHA256SUMS.txt`: artefato da **run manual do build-msi** que o
-  Vigia indicou: **run [37833752635](https://github.com/zzin742/apice-gestor/actions/runs/37833752635)**
-  (main `25c1654`), SHA-256 `3e81b7acb1332158374a783ce99895cf304353bfc48adc87a6aede3dc35a9827`.
-  Esse `.msi` fala com o **Hub de produção**: `https://www.apicehub.com.br/api/gestor`.
-  **Não use .msi de outra run:** as anteriores apontam para o mock do Mac do José Luiz.
-- Um **código de enrolamento novo**, gerado pelo José Luiz em
-  `https://www.apicehub.com.br/admin/dispositivos` (só admin; abre pela URL). Ele vale **24 h**, é
-  de **uso único** e **aparece uma vez só** na tela: anote na hora, em papel, e não mande por
-  WhatsApp nem por grupo.
+- `apice-gestor_0.1.0_x64.msi` e `SHA256SUMS.txt`: artefato da **run manual do build-msi** da
+  branch **`feat/servico`** que o Vigia indicou: **run [38393784525](https://github.com/zzin742/apice-gestor/actions/runs/38393784525)** (`6bfa888`),
+  SHA-256 `88d735e35cc50d39322e16860109ceadeb883c5e1e51de1600ca68aa55829640`. Este `.msi` instala o **serviço do Windows** "Ápice Gestor" (conta SYSTEM,
+  início automático), que abre a cápsula sozinho em cada logon. Fala com o **Hub de produção**
+  (`https://www.apicehub.com.br/api/gestor`). **Não use .msi de outra run.**
+- **Códigos de enrolamento**, gerados pelo José Luiz em `https://www.apicehub.com.br/admin/dispositivos`
+  (24 h, uso único, aparecem uma vez só: anote em papel e não mande por WhatsApp). **Peça 3**: um
+  para o enrolamento (passo 3) e dois de reserva para os testes negativos do cofre (passo 5A),
+  caso o app os gaste.
 
-> **O PC do Vinny já tem o app do mock, com o token do mock.** Esse token não vale no Hub de
-> verdade, então é preciso **reenrolar**: desinstale o app (seção 5; pode manter o token, ele vai
-> ser substituído), instale o `.msi` novo (passo 2) e **faça o passo 3 com o código novo**. O
-> `--enrolar` grava o token novo por cima do antigo.
+## 0. Antes de começar (pré-requisitos)
+
+- [ ] **José Luiz presente** (regra de 08/10).
+- [ ] **O Hub está pronto para enrolar:** o Vigia confirmou com o Farol que as rotas
+      `/api/gestor/*` estão em produção e que o Hub alcança o banco (hub_reader/DSN na Vercel).
+      **Sem esse OK, a bancada para no passo 3.**
+- [ ] **Duas contas no PC:** a do Vinny (administrador) **e uma conta de usuário COMUM** (padrão,
+      sem administrador). Se não existir, crie uma conta local padrão só para o teste. Os passos
+      5A e 5B (itens 6 e 9) só provam alguma coisa com ela.
+- [ ] O PC do Vinny tinha o app do mock/Hub sem serviço, com o token no Gerenciador de
+      Credenciais. Esse token **não vale mais** (o token agora fica no cofre da máquina): o passo 3
+      enrola de novo.
 
 ## 1. O PC enxerga o Hub?
 
@@ -59,19 +67,33 @@ Add-MpPreference -ExclusionPath $pasta
 - **Se der erro** ("0x800106ba" ou outro antivírus no lugar do Defender): anote e siga. Avise o
   Vigia qual antivírus o PC usa.
 
-Feche esse PowerShell de administrador. **O resto do roteiro é no PowerShell normal.**
+**Deixe esse PowerShell de administrador aberto:** os passos 3 e 5 usam ele.
 
 Depois, dê **dois cliques no .msi**. O Windows vai avisar que o arquivo não é assinado ("O Windows
 protegeu o computador" → **Mais informações → Executar assim mesmo**). É esperado: ainda não temos
 certificado. Aceite o UAC.
 
-- **Esperado:** instala sem erro, em `C:\Program Files\Ápice Gestor\`.
+- **Esperado:** instala sem erro, em `C:\Program Files\Ápice Gestor\`, e cria o **serviço
+  "Ápice Gestor"** (`Get-Service ApiceGestor` no PowerShell de administrador: `Running`).
+- **O PC já tinha um .msi anterior** (o do mock/do Hub sem serviço)? Pode instalar por cima: é uma
+  atualização. Esperado: sem pedido de reinício.
 - Se o PC não tiver o WebView2, o instalador baixa sozinho (precisa de internet).
 
-## 3. Enrolar a máquina — UMA vez
+## 3. Enrolar a máquina — PowerShell de ADMINISTRADOR, uma vez
 
-No **mesmo PowerShell, sem elevação, logado como o Vinny**. O token fica guardado na conta de
-quem roda este passo; se rodar como outra conta, o app não acha o token.
+O token agora fica no **cofre da máquina** (`%ProgramData%\ApiceGestor\device.token`, cifrado e
+legível só por SYSTEM e Administradores), e quem o usa é o serviço. Por isso este passo roda **no
+PowerShell de administrador**. Sem elevação ele **falha** (é o teste 5A-3).
+
+**Antes, a parte 1 do teste do cofre** (prova que o enrolamento fecha uma pasta "plantada"): entre
+na **conta de usuário comum**, abra um PowerShell normal e rode:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:ProgramData\ApiceGestor" | Out-Null
+Set-Content "$env:ProgramData\ApiceGestor\device.token.tmp" 'plantado pelo usuario comum'
+```
+
+Volte para a conta do Vinny e, **no PowerShell de administrador**:
 
 ```powershell
 $exe   = Join-Path $env:ProgramFiles ([char]0x00C1 + 'pice Gestor\apice-gestor.exe')
@@ -79,28 +101,31 @@ $saida = Join-Path $env:TEMP 'enrolar.txt'
 $codigo = Read-Host 'Código de enrolamento'
 $p = Start-Process -FilePath $exe -ArgumentList '--enrolar',$codigo -Wait -PassThru -NoNewWindow -RedirectStandardOutput $saida
 "saída: $($p.ExitCode)"; Get-Content $saida; Remove-Item $saida
+icacls "$env:ProgramData\ApiceGestor"
+icacls "$env:ProgramData\ApiceGestor\device.token"
 ```
-
-(O caminho do `.exe` está para o Chassi confirmar. Se `$exe` não existir, procure
-`apice-gestor.exe` dentro de `C:\Program Files\` e anote onde estava.)
 
 | Saída | Quer dizer | O que fazer |
 |---|---|---|
-| `0` + "Nome · Departamento" | enrolado | siga para o passo 4 |
+| `0` + "Nome · Departamento" | enrolado | confira o `icacls` abaixo e siga |
 | `2` | código inválido, expirado ou já usado | **não repita**. O José Luiz gera outro em `/admin/dispositivos` |
 | `3` | limite de tentativas do escritório | espere 5 min; pode repetir **o mesmo** código uma vez |
-| `4` | sem conexão com o Hub | volte ao passo 1 |
-| `5` / `64` / outro | erro do app | pare e anote |
+| `4` | sem conexão com o Hub | volte ao passo 1 (e ao item "Hub pronto" do passo 0) |
+| `5` / `64` / outro | erro do app | pare e anote o texto |
 
-**Não rode o comando duas vezes "para garantir".** O código é de uso único, e o escritório inteiro
-divide o limite de 10 tentativas por minuto.
+**Esperado no `icacls`** (pasta e arquivo): dono **NT AUTHORITY\SYSTEM** e acesso **só de
+SYSTEM e Administradores** (nada de "Usuários", "Users" ou do nome do Vinny).
 
-*Alternativa com o script (só se o José Luiz liberar: o `instalar.ps1` ainda aguarda o "manda bala"):* `powershell -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1 -Reenrolar`
-faz os passos 2 e 3 de uma vez, com o `.msi` e o `SHA256SUMS.txt` na mesma pasta do script.
+**Não rode o `--enrolar` duas vezes "para garantir".** O código é de uso único e o escritório
+inteiro divide o limite de 10 tentativas por minuto.
 
-## 4. Abrir o app e conferir
+*Ainda NÃO use o `instalar.ps1` nesta bancada:* ele está sendo atualizado para o cofre da máquina
+(o enrolamento dele ainda é o antigo).
 
-Abra o **Ápice Gestor** pelo menu Iniciar.
+## 4. Conferir o painel (sem abrir nada: o serviço abre a cápsula)
+
+Depois do enrolamento, a cápsula aparece sozinha em segundos (se não aparecer em 1 minuto: saia
+da conta e entre de novo). **Não abra o app pelo menu Iniciar.**
 
 - [ ] Aparece a **cápsula** no **canto inferior direito**, acima da barra de tarefas, sempre no
       topo, sem cobrir a área de trabalho.
@@ -124,63 +149,97 @@ Abra o **Ápice Gestor** pelo menu Iniciar.
       comece a arrastar. **Esperado:** o cartão recolhe e só então a cápsula é arrastada.
 - [ ] **4. Canto oposto:** solte a cápsula no **alto à esquerda** da tela e abra o cartão.
       **Esperado:** o cartão abre **para baixo e para a direita**, inteiro na tela.
-- [ ] **5. Posição lembrada:** feche o app (menu da bandeja ou Gerenciador de Tarefas) e abra de
-      novo pelo menu Iniciar. **Esperado:** a cápsula volta onde você deixou.
+- [ ] **5. Posição lembrada:** feche a cápsula pelo menu da bandeja. O serviço a reabre sozinho
+      em segundos. **Esperado:** ela volta onde você deixou.
 - [ ] **6. Voltar ao canto:** clique com o botão direito no ícone da bandeja → **Voltar ao canto**.
       **Esperado:** a cápsula volta ao canto inferior direito, acima da barra.
 
-## 4c. Início automático com o Windows (critério 6 do pedido de 09/10)
+## 5. Serviço e cofre — o que só a bancada prova
 
-O Gestor tem que estar rodando sempre que a pessoa entrar no Windows, sem ninguém abrir nada.
+O CI instala, atualiza e desinstala o serviço num Windows de verdade, mas **não tem sessão de
+usuário**: tudo abaixo só se prova aqui. Comandos no **PowerShell de administrador**, menos onde
+diz *usuário comum*. Anote a hora de cada item. O diário do serviço fica em
+`%ProgramData%\ApiceGestor\servico.log` (sem token e sem segredo; só administrador lê).
 
-- [ ] **1. Ligar sem abrir nada:** desligue o PC pelo menu Iniciar, ligue de novo e entre no
-      Windows **sem abrir nenhum programa**. **Esperado:** a cápsula aparece sozinha no canto, e
-      em `https://www.apicehub.com.br/admin/dispositivos` a máquina mostra um **último contato
-      novo**, da hora em que o PC ligou.
-- [ ] **2. Depois de desativar e abrir uma vez:** Gerenciador de Tarefas (Ctrl+Shift+Esc) →
-      **Inicializar** (ou "Aplicativos de inicialização") → **Ápice Gestor** → **Desabilitar**.
-      Abra o app **uma vez** pelo menu Iniciar. Desligue e ligue o PC sem abrir nada.
-      **Esperado:** o Gestor sobe sozinho de novo.
+### 5A. Cofre (ACL)
 
-Anote em cada item a hora em que ligou o PC e a hora do último contato no Hub. Uma diferença
-grande também é falha.
+- [ ] **1. Pasta plantada:** já feito no passo 3. **Esperado:** `icacls` só com SYSTEM e
+      Administradores, dono SYSTEM. Agora, na **conta de usuário comum**:
+      `type "$env:ProgramData\ApiceGestor\device.token"` → **acesso negado**.
+- [ ] **2. Temporário preso:** na **conta de usuário comum**, num PowerShell, segure o arquivo:
+      `$f = [IO.File]::Open("$env:ProgramData\ApiceGestor\device.token.tmp", 'OpenOrCreate', 'ReadWrite', 'None')`
+      (se der acesso negado já aqui, é porque a pasta está fechada: anote "bloqueado na pasta" e
+      siga). Com ele aberto, `--enrolar` elevado com um **código de reserva**. **Esperado:** falha,
+      **nada gravado** (o token do passo 3 continua valendo: o painel segue funcionando) e a
+      mensagem pede administrador. Depois `$f.Close()`.
+- [ ] **3. Sem elevação:** num PowerShell **normal** (sem administrador), `--enrolar` com o outro
+      código de reserva. **Esperado:** falha (saída diferente de 0), **nada gravado**, painel segue
+      funcionando.
+- [ ] **4. Só o serviço lê:** `Restart-Service ApiceGestor`. **Esperado:** a máquina ganha um
+      último contato novo em `/admin/dispositivos` e a cápsula volta com as tarefas; na **conta de
+      usuário comum**, `type` no `device.token` continua dando **acesso negado**.
 
-> O **instalador** respeita quem desativou: reinstalar não religa (decisão do José Luiz, 09/10).
-> Quem religa é o **app**, quando alguém o abre. Por isso o item 2 abre o app uma vez.
+### 5B. Cápsula lançada pelo serviço (W6 1–9 + H5)
 
-## 5. Desfazer (se o José Luiz pedir)
+- [ ] **1. Ligar com usuário logado:** reinicie e entre no Windows **sem abrir nada**. **Esperado:**
+      a cápsula aparece em **até 30 s** depois de a área de trabalho aparecer.
+- [ ] **2. Cápsula morta volta:** `Stop-Process -Name apice-gestor -Force`. **Esperado:** volta sozinha.
+- [ ] **3. Freio:** mate a cápsula **4 vezes seguidas** (repita o comando assim que ela voltar).
+      **Esperado:** ela para de ser relançada por um tempo e o `servico.log` registra o freio.
+- [ ] **4. Logoff/logon:** saia da conta e entre de novo. **Esperado:** uma cápsula nova e
+      **uma só** (`Get-Process apice-gestor` mostra um processo para o usuário).
+- [ ] **5. Bloquear/desbloquear:** Win+L e entre de novo. **Esperado:** nada quebra.
+- [ ] **6. Quem roda o quê:**
+      `Get-Process apice-gestor, apice-gestor-servico -IncludeUserName | Format-Table Name, Id, UserName`
+      **Esperado:** `apice-gestor` (cápsula) com o **usuário** da sessão; `apice-gestor-servico`
+      como **NT AUTHORITY\SYSTEM**. Repita com a **conta de usuário comum** logada.
+- [ ] **7. Run vazio:** na conta do usuário,
+      `Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run` → **nenhum** valor do
+      Ápice Gestor, depois de tudo.
+- [ ] **8. Diário sem segredo:** `Get-Content "$env:ProgramData\ApiceGestor\servico.log" -Tail 50`
+      mostra o enrolamento e **nenhum token**.
+- [ ] **9. Usuário comum não lê o cofre:** igual ao 5A-1 (`type` → acesso negado).
+- [ ] **10. Bandeja no logon (H5):** a cápsula pode subir antes do Explorer. Reinicie 2 ou 3 vezes
+      e olhe a bandeja assim que a barra aparecer. **Esperado:** o **ícone do Ápice Gestor está na
+      bandeja**. Anote se em alguma vez não estava e quanto tempo a barra levou.
+- [ ] **11. Parar o serviço fecha a cápsula:** `Stop-Service ApiceGestor`. **Esperado:** a cápsula
+      some e **não volta**. Depois `Start-Service ApiceGestor` → ela volta.
 
-Configurações → Aplicativos → **Ápice Gestor** → Desinstalar. O token fica no Gerenciador de
-Credenciais do Windows: **Credenciais do Windows → Credenciais genéricas →** item com
-`br.com.apice.gestor` → Remover.
+### 5C. Atualização com o serviço rodando
 
-Para tirar a exceção do Defender (PowerShell **como administrador**):
+Quando o Vigia mandar o **próximo** `.msi`, instale por cima com a cápsula aberta (dois cliques ou
+`msiexec /i`). **Esperado:** sem pedido de reinício, sem erro de arquivo em uso; o serviço volta
+`Running` e a cápsula volta sozinha.
+
+## 6. Desfazer (se o José Luiz pedir)
+
+Configurações → Aplicativos → **Ápice Gestor** → Desinstalar. Isso remove o app **e o serviço**.
+
+Ficam para trás (PowerShell **de administrador**):
 
 ```powershell
+# Exceção do Defender
 Remove-MpPreference -ExclusionPath (Join-Path $env:ProgramFiles ([char]0x00C1 + 'pice Gestor'))
+# Cofre e diário (o token da máquina): só se o José Luiz pedir para apagar o enrolamento
+Remove-Item "$env:ProgramData\ApiceGestor" -Recurse -Force
 ```
 
-## 6. Se falhar, anote
+O token antigo do mock no Gerenciador de Credenciais (**Credenciais do Windows → Credenciais
+genéricas →** item com `br.com.apice.gestor`) pode ser removido à mão; o app novo não o usa.
+
+## 7. Se falhar, anote
 
 Mande para o Vigia, com foto da tela quando ajudar:
 
-1. **Em qual passo** parou (1 a 4c) e o horário.
+1. **Em qual passo/item** parou e o horário.
 2. **Passo 1:** o que o navegador mostrou.
-3. **Passo 2:** o resultado da exceção no Defender (`True` ou o erro), os dois SHA-256 e a mensagem
-   do instalador (texto ou código de erro).
-4. **Passo 3:** o número da **saída** e o texto impresso. **Não** mande o código de enrolamento
-   por WhatsApp/grupo.
-5. **Passo 4:** o **estado do painel**: a cápsula apareceu? onde? Está âmbar ("dados de ontem"),
-   "sem conexão", "não configurado", vazia ou com tarefas? Foto da cápsula e do cartão aberto.
-6. **Passo 4b:** qual item (1 a 6) falhou, onde a cápsula estava na tela e o que aconteceu
-   (não mexeu, cartão não recolheu, abriu cortado, posição perdida...). Um vídeo do celular ajuda.
-7. **Passo 4c:** qual item, a hora em que ligou o PC, se a cápsula apareceu sem abrir nada, o
-   último contato em `/admin/dispositivos` e como estava o Ápice Gestor na aba Inicializar do
-   Gerenciador de Tarefas (Habilitado/Desabilitado).
+3. **Passo 2:** o resultado da exceção no Defender (`True` ou o erro), os dois SHA-256, a mensagem
+   do instalador e o `Get-Service ApiceGestor`.
+4. **Passo 3:** o número da **saída**, o texto impresso e a saída dos dois `icacls`. **Não** mande o
+   código de enrolamento por WhatsApp/grupo.
+5. **Passo 4:** o **estado do painel**: a cápsula apareceu sozinha? onde? Está âmbar ("dados de
+   ontem"), "sem conexão", "não configurado", vazia ou com tarefas? Foto da cápsula e do cartão.
+6. **Passo 4b:** qual item falhou, onde a cápsula estava e o que aconteceu.
+7. **Passo 5:** o item, a hora, a saída do comando, e as **últimas linhas do `servico.log`** no
+   mesmo minuto (`Get-Content "$env:ProgramData\ApiceGestor\servico.log" -Tail 30`).
 8. Versão do Windows (`winver`) e se há outro antivírus além do Defender.
-
----
-
-*Depois do piloto, este roteiro vira o `scripts/instalar.ps1`, que faz os passos 2 e 3 sozinho
-(com conferência de hash, exceção no Defender e o rate limit do enrolamento). Na bancada, os
-passos são manuais de propósito: assim dá para ver onde falha.*
