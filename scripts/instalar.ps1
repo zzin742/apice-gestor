@@ -11,12 +11,13 @@
   Instalar tem três partes:
     1. Máquina (administrador; o script pede o UAC sozinho): WebView2 se faltar, o .msi em
        silêncio e a exceção no Defender. Pode ser autorizada com a senha da TI.
-    2. Início automático (SEM elevação): registra o Gestor em HKCU\...\Run do colaborador, para
-       ele abrir ao entrar no Windows sem ninguém abrir nada. Se a pessoa desativou no
-       Gerenciador de Tarefas, respeita e não religa (decisão do José Luiz, 09/10).
-    3. Enrolamento (SEM elevação, no usuário da sessão): pede o código gerado no Hub e chama
-       "apice-gestor.exe --enrolar <código>". O token vai para o Credential Manager DO USUÁRIO que
-       roda esta etapa; por isso ela nunca roda como a conta da TI.
+    2. Enrolamento (na MESMA etapa elevada): pede o código gerado no Hub e chama
+       "apice-gestor.exe --enrolar <código>". O token vai para o cofre DA MÁQUINA
+       (%ProgramData%\ApiceGestor\device.token, DPAPI de máquina, só SYSTEM e Administradores);
+       quem o lê é o serviço. Pode ser autorizado pela conta da TI.
+    3. Início automático: com o serviço (builds da feat/servico), é ele que abre a cápsula em cada
+       logon, e o script remove o HKCU\Run legado. Sem serviço (builds antigos), registra o Run do
+       colaborador, respeitando quem desativou no Gerenciador de Tarefas.
 
   Idempotente: não reinstala o mesmo .msi (mesmo ProductCode), não duplica a exceção e não enrola
   de novo quem já tem token (-Reenrolar para trocar).
@@ -78,6 +79,9 @@ $KeychainServico = 'br.com.apice.gestor'                              # alvo no 
 $WebView2Id      = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
 $WebView2Url     = 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' # Evergreen Bootstrapper
 $PastaLog        = Join-Path $env:ProgramData 'ApiceGestor'
+# Cofre da máquina (feat/servico, cofre.rs): o --enrolar ELEVADO grava aqui, cifrado com DPAPI de
+# máquina e com a pasta fechada para SYSTEM + Administradores; quem lê é o serviço.
+$Cofre           = Join-Path $PastaLog 'device.token'
 $RaizesUninstall = @(
     'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
@@ -157,8 +161,8 @@ function WebView2Presente {
     return $false
 }
 
-# Alvos do Credential Manager do usuário atual que pertencem ao app (o keyring grava um
-# "Generic credential" cujo alvo contém o serviço).
+# LEGADO: alvos do Credential Manager do usuário (onde o token ficava antes do cofre da máquina).
+# Só para limpeza; o app de hoje não os lê.
 function AlvosDoToken {
     $alvos = @()
     foreach ($linha in (cmdkey /list 2>$null)) {
@@ -169,7 +173,8 @@ function AlvosDoToken {
     return @($alvos)
 }
 
-function JaEnrolado { return [bool](AlvosDoToken) }
+# Enrolada = existe o device.token no cofre. Só administrador enxerga a pasta: chamar elevado.
+function JaEnrolado { return (Test-Path -LiteralPath $Cofre) }
 
 # O .msi traz serviço? Lê a tabela ServiceInstall do próprio pacote (ausente = não traz).
 function MsiTemServico([string]$caminho) {
@@ -377,14 +382,21 @@ function EtapaRemocao {
         Escrever "Defender: não deu para remover a exceção ($($_.Exception.Message))." 'Yellow'
     }
     # WebView2 fica: é componente do Windows, outros apps usam.
+
+    if ($RemoverToken) { RemoverTokenDaMaquina }
+    else { Escrever 'Token preservado no cofre da máquina (reinstalar não gasta outro código). Para apagar: -RemoverToken.' }
 }
 
-# --- Enrolamento (usuário da sessão, sem elevação) --------------------------------------------
+# --- Enrolamento (ELEVADO: o token vai para o cofre da máquina) -------------------------------
+# Antes do cofre, rodava fora da elevação e gravava no Credential Manager do usuário; agora o
+# --enrolar sem elevação falha (não consegue fechar a ACL da pasta). As 3 regras do rate limit valem
+# igual.
 function Enrolar {
     Escrever '== Enrolamento ==' 'Cyan'
+    if (-not (EhAdmin)) { throw 'O enrolamento precisa de administrador (cofre da máquina).' }
 
     if ((JaEnrolado) -and -not $Reenrolar) {
-        Escrever 'Esta máquina já está enrolada para este usuário. (Para trocar o token: -Reenrolar)' 'Green'
+        Escrever 'Esta máquina já está enrolada (cofre da máquina). Para trocar o token: -Reenrolar' 'Green'
         return $true
     }
 
@@ -409,6 +421,11 @@ function Enrolar {
             switch ($p.ExitCode) {
                 0 {
                     Escrever "Enrolado: $texto" 'Green'
+                    # O serviço lê o cofre ao subir: reinicia para ele pegar o token novo agora.
+                    if (InfoServico) {
+                        Restart-Service -Name $Servico -Force -ErrorAction SilentlyContinue
+                        Escrever 'Serviço reiniciado para ler o token novo.'
+                    }
                     return $true
                 }
                 2 {
@@ -424,7 +441,7 @@ function Enrolar {
                     Escrever 'Sem conexão com o Hub. Confira a rede e digite o código de novo.' 'Red'
                 }
                 default {
-                    Escrever "Erro no enrolamento (saída $($p.ExitCode)). Avise o responsável pelo piloto." 'Red'
+                    Escrever "Erro no enrolamento (saída $($p.ExitCode)): $texto. Avise o responsável pelo piloto." 'Red'
                     return $false
                 }
             }
@@ -435,15 +452,23 @@ function Enrolar {
     }
 }
 
+function RemoverTokenDaMaquina {
+    if (-not (Test-Path -LiteralPath $Cofre)) { Escrever 'Token: o cofre da máquina já estava vazio.'; return }
+    Remove-Item -LiteralPath $Cofre -Force
+    Remove-Item -LiteralPath "$Cofre.tmp" -Force -ErrorAction SilentlyContinue
+    Escrever 'Token removido do cofre da máquina. Para usar de novo, será preciso um código novo.' 'Green'
+}
+
+# LEGADO: token antigo no Credential Manager do usuário (antes do cofre).
 function RemoverTokenDoUsuario {
     $alvos = AlvosDoToken
-    if (-not $alvos) { Escrever 'Token: não havia token para este usuário.'; return }
+    if (-not $alvos) { return }
     foreach ($a in $alvos) {
         cmdkey "/delete:$a" | Out-Null
         if ($LASTEXITCODE -ne 0) { cmdkey "/delete:LegacyGeneric:target=$a" | Out-Null }
     }
-    if (JaEnrolado) { Escrever 'Token: não consegui remover. Apague no Gerenciador de Credenciais (Credenciais genéricas).' 'Yellow' }
-    else { Escrever 'Token removido. Para usar de novo, será preciso um código novo.' 'Green' }
+    if (AlvosDoToken) { Escrever 'Token antigo: não consegui remover do Gerenciador de Credenciais (Credenciais genéricas).' 'Yellow' }
+    else { Escrever 'Token antigo do Gerenciador de Credenciais removido.' }
 }
 
 # --- Início automático (HKCU\Run do usuário da sessão) -----------------------------------------
@@ -518,26 +543,27 @@ function SessaoEhDesteUsuario([switch]$Calado) {
 # --- Fluxo -----------------------------------------------------------------------------------
 # Instâncias elevadas: só a parte da máquina.
 if ($Etapa -eq 'Maquina') {
-    try { EtapaMaquina (Resolve-Path $Msi).Path; exit 0 } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
+    try { EtapaMaquina (Resolve-Path $Msi).Path } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
+    if ($SemEnrolar) { exit 0 }
+    if (Enrolar) { exit 0 } else { Read-Host 'Enrolamento não concluído. Enter para fechar' | Out-Null; exit 2 }
 }
 if ($Etapa -eq 'Remocao') {
     try { EtapaRemocao; exit 0 } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
 }
 
 if ($Desinstalar) {
-    # Autostart e token são da conta da sessão: tratados aqui, antes da elevação.
-    if (-not (SessaoEhDesteUsuario)) { exit 2 }
-    RemoverAutostartDoUsuario
-    if ($RemoverToken) {
-        RemoverTokenDoUsuario
-    } else {
-        Escrever 'Token preservado (reinstalar não gasta outro código). Para apagar: -RemoverToken.'
+    # Por usuário só sobrou o LEGADO (Run e o token antigo do Credential Manager): limpa se este
+    # PowerShell é o da sessão. O token de hoje (cofre) é da máquina: vai na etapa elevada.
+    if (SessaoEhDesteUsuario -Calado) {
+        RemoverAutostartDoUsuario
+        if ($RemoverToken) { RemoverTokenDoUsuario }
     }
     if (EhAdmin) {
         try { EtapaRemocao } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
     } else {
         Write-Host 'Pedindo permissão de administrador para desinstalar...' -ForegroundColor Cyan
-        if ((RelancarElevado 'Remocao' @()) -ne 0) { Write-Host "A desinstalação falhou (veja $PastaLog\instalar.log)." -ForegroundColor Red; exit 1 }
+        $extras = @(); if ($RemoverToken) { $extras += '-RemoverToken' }
+        if ((RelancarElevado 'Remocao' $extras) -ne 0) { Write-Host "A desinstalação falhou (veja $PastaLog\instalar.log)." -ForegroundColor Red; exit 1 }
     }
     exit 0
 }
@@ -563,11 +589,20 @@ if (Test-Path $somas) {
 Unblock-File -Path $Msi -ErrorAction SilentlyContinue
 
 # Etapa da máquina: relança elevado (UAC). Quem autoriza pode ser o colaborador ou a TI.
+# O enrolamento roda nessa mesma etapa elevada (cofre da máquina): a janela de administrador pede
+# o código.
+$saidaMaquina = 0
 if (EhAdmin) {
     try { EtapaMaquina $Msi } catch { Escrever "ERRO: $($_.Exception.Message)" 'Red'; exit 1 }
+    if (-not $SemEnrolar -and -not (Enrolar)) { $saidaMaquina = 2 }
 } else {
-    Write-Host 'Pedindo permissão de administrador para instalar...' -ForegroundColor Cyan
-    if ((RelancarElevado 'Maquina' @('-Msi', "`"$Msi`"")) -ne 0) { Write-Host "A etapa da máquina falhou (veja $PastaLog\instalar.log)." -ForegroundColor Red; exit 1 }
+    Write-Host 'Pedindo permissão de administrador para instalar (o código de enrolamento é pedido na janela de administrador)...' -ForegroundColor Cyan
+    $extras = @('-Msi', "`"$Msi`"")
+    if ($SemEnrolar) { $extras += '-SemEnrolar' }
+    if ($Reenrolar)  { $extras += '-Reenrolar' }
+    $saidaMaquina = RelancarElevado 'Maquina' $extras
+    if ($saidaMaquina -eq 1) { Write-Host "A etapa da máquina falhou (veja $PastaLog\instalar.log)." -ForegroundColor Red; exit 1 }
+    if ($saidaMaquina -eq 2) { Write-Host 'Instalado, mas o enrolamento não foi concluído. Rode o script de novo com um código válido.' -ForegroundColor Yellow }
 }
 
 # Início automático e token são da conta da sessão: nunca gravar na conta da TI.
@@ -581,13 +616,10 @@ if (InfoServico) {
     Escrever 'Início automático: NÃO registrado (este PowerShell não é o do colaborador). Rode o script de novo na conta dele.' 'Yellow'
 }
 
-if ($SemEnrolar) { exit 0 }
-if (-not (SessaoEhDesteUsuario)) { exit 2 }
-
-if (Enrolar) {
-    # Abre o app na sessão do colaborador (este processo é o dele).
-    if (-not (Get-Process -Name $Processo -ErrorAction SilentlyContinue)) { Start-Process -FilePath $Exe }
-    Escrever 'Pronto.' 'Green'
-    exit 0
+if ($saidaMaquina -ne 0) { exit $saidaMaquina }
+# Sem serviço (builds antigos), ninguém abre a cápsula: abre aqui, na sessão de quem rodou.
+if (-not (InfoServico) -and -not (EhAdmin) -and -not (Get-Process -Name $Processo -ErrorAction SilentlyContinue)) {
+    Start-Process -FilePath $Exe
 }
-exit 2
+Escrever 'Pronto.' 'Green'
+exit 0
