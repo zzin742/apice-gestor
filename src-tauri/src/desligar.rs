@@ -10,22 +10,25 @@
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-/// Marcado uma vez, no começo do processo. A trava (b) compara a idade da ordem com isto.
-static INICIO: OnceLock<Instant> = OnceLock::new();
+/// Marco do início "desta execução" para a trava (b). É RESETÁVEL: além do start do serviço, o
+/// resume de energia (Fast Startup/suspensão) rezera — senão o relógio contaria o tempo em que o
+/// PC esteve desligado e uma ordem criada nesse período passaria pela trava (crítério 7).
+static INICIO: Mutex<Option<Instant>> = Mutex::new(None);
 
-/// Chamar cedo no `setup`, para o relógio do processo começar a contar do início.
+/// Chamar no start do serviço e a cada retomada de energia. Rezera o relógio da trava (b).
 pub fn marcar_inicio() {
-    let _ = INICIO.get_or_init(Instant::now);
+    *INICIO.lock().unwrap() = Some(Instant::now());
 }
 
-/// Quanto tempo este processo está no ar (relógio monotônico; independe do relógio do PC).
+/// Quanto tempo desde o último `marcar_inicio` (relógio monotônico). Sem marca ainda → zero, e a
+/// trava (b) ignora tudo (lado seguro: sem relógio, não desliga).
 fn uptime_processo() -> Duration {
-    INICIO.get_or_init(Instant::now).elapsed()
+    INICIO.lock().unwrap().map(|i| i.elapsed()).unwrap_or(Duration::ZERO)
 }
 
 /// Quantos ids guardar; ordens vencem em minutos, então isso cobre muito mais que o necessário.
@@ -61,7 +64,8 @@ struct Executado {
     em: String,
 }
 
-/// Trava (c): ids de ordens já executadas, em `%LOCALAPPDATA%\br.com.apice.gestor\`.
+/// Trava (c): ids de ordens já executadas. No serviço, a pasta vem de `cofre::pasta_dados()` —
+/// `%ProgramData%\ApiceGestor\comandos-executados.json` (mesma do cofre, ACL fechada).
 pub struct Executados {
     arquivo: PathBuf,
 }
@@ -159,4 +163,35 @@ pub fn desligar() -> Result<(), String> {
 #[cfg(not(windows))]
 pub fn desligar() -> Result<(), String> {
     Err("desligamento só existe no Windows".into())
+}
+
+#[cfg(test)]
+mod testes {
+    use super::*;
+
+    #[test]
+    fn executados_nao_repete() {
+        // Trava (c): id gravado antes de desligar nunca roda de novo.
+        let pasta = std::env::temp_dir().join(format!("apice-exec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&pasta);
+        let ex = Executados::em(&pasta);
+        assert!(!ex.contem("cmd_1"));
+        ex.registrar("cmd_1").unwrap();
+        assert!(ex.contem("cmd_1"));
+        assert_eq!(ex.ultimo().as_deref(), Some("cmd_1"));
+        // reaparecer o mesmo id: segue marcado como executado
+        assert!(ex.contem("cmd_1"));
+        let _ = std::fs::remove_dir_all(&pasta);
+    }
+
+    #[test]
+    fn trava_b_ignora_ordem_anterior() {
+        // Sem marca de início → uptime 0 → qualquer ordem com idade > 0 é anterior (ignora).
+        *INICIO.lock().unwrap() = None;
+        assert!(anterior_a_esta_execucao(1));
+        // Com o relógio zerado agora, uma ordem "velha" (1h) é anterior; uma de 0s não é.
+        marcar_inicio();
+        assert!(anterior_a_esta_execucao(3600));
+        assert!(!anterior_a_esta_execucao(0));
+    }
 }

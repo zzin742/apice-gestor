@@ -33,8 +33,8 @@ mod windows {
 
     use serde_json::Value;
     use windows_service::service::{
-        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
-        ServiceType,
+        PowerEventParam, ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState,
+        ServiceStatus, ServiceType,
     };
     use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
     use windows_service::{define_windows_service, service_dispatcher};
@@ -73,6 +73,15 @@ mod windows {
                     let _ = parar_tx.send(());
                     ServiceControlHandlerResult::NoError
                 }
+                // Retomada (Fast Startup/suspensão): rezera o relógio da trava (b), senão uma ordem
+                // criada com o PC desligado passaria pela trava (critério 7).
+                ServiceControl::PowerEvent(
+                    PowerEventParam::ResumeAutomatic | PowerEventParam::ResumeSuspend,
+                ) => {
+                    desligar::marcar_inicio();
+                    crate::diario::registrar("retomada de energia: relógio da trava (b) zerado");
+                    ServiceControlHandlerResult::NoError
+                }
                 _ => ServiceControlHandlerResult::NotImplemented,
             }
         };
@@ -91,7 +100,10 @@ mod windows {
         // D5: marca "em execução" CEDO — antes do cofre e da rede. O msiexec (ServiceControl
         // Wait+Vital) espera isto; sair com erro aqui faria a instalação inteira dar rollback.
         // Sem token é o caminho NORMAL (o enrolamento vem depois): fica rodando e os laços esperam.
-        status.set_service_status(marcar(ServiceState::Running, ServiceControlAccept::STOP))?;
+        status.set_service_status(marcar(
+            ServiceState::Running,
+            ServiceControlAccept::STOP | ServiceControlAccept::POWER_EVENT,
+        ))?;
         desligar::marcar_inicio(); // relógio do processo para a trava (b) das ordens
 
         // D3: runtime async próprio do serviço (não há runtime do Tauri aqui).
