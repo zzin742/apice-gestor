@@ -236,12 +236,23 @@ function RemoverServicoOrfao {
 }
 
 function PararApp {
-    # Fecha a cápsula em todas as sessões, mas nunca o processo do serviço: o MSI para o serviço do
-    # jeito certo, e matar o processo faria o Windows reiniciá-lo (recuperação) no meio da instalação.
-    $pidServico = $null
+    # Com o serviço vivo, ele relança a cápsula em segundos, e o msiexec confere arquivos em uso
+    # (InstallValidate) ANTES de parar o serviço (StopServices do ServiceControl): o apice-gestor.exe
+    # estaria em uso → Restart Manager → 3010/pedido de reinício, ou falha em /qn (H3, revisão do
+    # Diretor na 4/4). Por isso: PARA O SERVIÇO PRIMEIRO, pelo SCM (não conta como queda, a
+    # recuperação não age), e só depois fecha as cápsulas. O MSI religa o serviço no fim
+    # (ServiceControl Start=install); se o msiexec falhar, EtapaMaquina religa.
     $svc = InfoServico
-    if ($svc) { $pidServico = $svc.ProcessId }
-    $abertos = @(Get-Process -Name $Processo -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $pidServico })
+    if ($svc -and $svc.State -ne 'Stopped') {
+        Stop-Service -Name $Servico -Force -ErrorAction SilentlyContinue
+        try {
+            (Get-Service -Name $Servico).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+        } catch {
+            throw "O serviço $Servico não parou em 30 s; sem isso os arquivos ficam em uso. Rode de novo ou reinicie o PC."
+        }
+        Escrever 'Serviço parado para a troca de arquivos (o instalador religa no fim).'
+    }
+    $abertos = @(Get-Process -Name $Processo -ErrorAction SilentlyContinue)
     if ($abertos) {
         $abertos | Stop-Process -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 1
@@ -312,13 +323,19 @@ function EtapaMaquina([string]$msi) {
         PararApp
         Escrever "Instalando $NomeApp $nova$(if ($instalados) { " (substituindo o build instalado $atual)" })..."
         $logMsi = Join-Path $PastaLog "msi-$(Get-Date -Format yyyyMMdd-HHmmss).log"
-        $p = Start-Process -FilePath 'msiexec.exe' -Wait -PassThru -ArgumentList @(
-            '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$logMsi`"")
-        switch ($p.ExitCode) {
-            0       { Escrever 'Instalado.' 'Green' }
-            3010    { Escrever 'Instalado (o Windows pede reinício, mas não é obrigatório agora).' 'Green' }
-            1618    { throw 'Outra instalação do Windows está em andamento. Espere terminar e rode de novo.' }
-            default { throw "msiexec falhou com código $($p.ExitCode). Log: $logMsi" }
+        try {
+            $p = Start-Process -FilePath 'msiexec.exe' -Wait -PassThru -ArgumentList @(
+                '/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$logMsi`"")
+            switch ($p.ExitCode) {
+                0       { Escrever 'Instalado.' 'Green' }
+                3010    { Escrever 'Instalado (o Windows pede reinício, mas não é obrigatório agora).' 'Green' }
+                1618    { throw 'Outra instalação do Windows está em andamento. Espere terminar e rode de novo.' }
+                default { throw "msiexec falhou com código $($p.ExitCode). Log: $logMsi" }
+            }
+        } catch {
+            # Falhou depois de o PararApp ter parado o serviço: não deixar a máquina sem ele.
+            if (InfoServico) { Start-Service -Name $Servico -ErrorAction SilentlyContinue }
+            throw
         }
     }
     if (-not (Test-Path $Exe)) { throw "Executável não encontrado em $Exe depois da instalação." }
