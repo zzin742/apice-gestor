@@ -270,6 +270,10 @@ jobs:
             if ($rc -ne 4) { throw "um clique sem endereco devia sair 4 (sem conexao), saiu $rc" }
             if (@($novas -match 'uma tentativa com o c').Count -ne 1) { throw 'um clique nao fez exatamente UMA tentativa' }
             if (Select-String -Path $log -Pattern 'TESTE-CI-000' -Quiet) { throw 'o codigo apareceu no log' }
+            # stderr do --enrolar (motivo de IO/icacls) vai ao log; mostra o que veio (nao reprova).
+            $err = @($novas -match '--enrolar \(stderr\)')
+            "stderr do --enrolar no log: $($err.Count) linha(s)"
+            $err
             if ((Svc).State -ne 'Running') { throw 'um clique nao deixou o servico rodando' }
             # Mensagem do --enrolar lida em UTF-8: nada de acento quebrado no log ("Ã§", "Ã£"...).
             # Padrão = Ã seguido de ¡..¿, com distinção de caixa (sem ela, "Ã" casaria o "ã" de "não").

@@ -426,6 +426,16 @@ function TentarCodigo([string]$codigo) {
         # O --enrolar escreve em UTF-8; o Windows PowerShell 5.1 leria como ANSI ("EndereÃ§o").
         $texto = Get-Content $saida -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
         if ($texto) { $texto = $texto.Trim() }
+        # O MOTIVO da falha (IO, icacls do cofre) vai para o stderr: entra no instalar.log, linha a
+        # linha, em qualquer saída. Não tem token; o código, se aparecer, é trocado por <código>.
+        $detalhe = Get-Content $erros -Encoding UTF8 -ErrorAction SilentlyContinue
+        foreach ($linha in @($detalhe)) {
+            $linha = ([string]$linha).Trim()
+            if (-not $linha) { continue }
+            if ($codigo) { $linha = [regex]::Replace($linha, [regex]::Escape($codigo), '<código>', 'IgnoreCase') }
+            Escrever "--enrolar (stderr): $linha" 'DarkGray'
+        }
+        if ($texto -and $codigo) { $texto = [regex]::Replace($texto, [regex]::Escape($codigo), '<código>', 'IgnoreCase') }
     } finally {
         Remove-Item $saida, $erros -Force -ErrorAction SilentlyContinue
     }
