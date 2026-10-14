@@ -86,13 +86,34 @@ pub fn gravar(token: &str) -> Result<(), ErroCofre> {
 /// Prova, ANTES de consumir o código no Hub, que dá para proteger a pasta e escrever no cofre
 /// (precisa de elevação). Sem isso, um --enrolar sem admin consumiria o código e só falharia ao
 /// gravar. Cria a pasta com a ACL e escreve/apaga um arquivo de teste; não toca no device.token.
+///
+/// Como o `fechar_acl` não recursa mais (sem /T), o `gravar()` não conserta conteúdo pré-plantado.
+/// Então o ensaio GARANTE aqui, ainda ANTES do POST (código não consumido), que o `gravar()` não
+/// vai falhar por ACL ou arquivo pré-existente de outro dono — senão o código seria QUEIMADO.
 pub fn ensaio() -> Result<(), ErroCofre> {
     let pasta = pasta()?;
     std::fs::create_dir_all(&pasta).map_err(|e| ErroCofre::Falha(e.to_string()))?;
+    // (B1) Sem /T não dá pra confiar que o alvo real é o esperado: recusa junction/symlink, que
+    // desviaria o cofre pra fora da pasta protegida.
+    #[cfg(windows)]
+    recusar_reparse(&pasta)?;
     #[cfg(windows)]
     fechar_acl(&pasta, false)?;
+
+    // device.token já plantado (por outro dono): toma posse/ACL dele AGORA. Falhou → Falha (código
+    // não consumido); deu certo → o rename do gravar() cai sobre um arquivo que já é nosso.
+    #[cfg(windows)]
+    {
+        let arquivo = pasta.join(ARQUIVO);
+        if arquivo.exists() {
+            fechar_acl(&arquivo, true)?;
+        }
+    }
+    // .tmp/.probe velhos de outro dono travariam o `create_new` do gravar(): remove AGORA e FALHA
+    // se não conseguir (nada de mascarar com `let _ =`).
+    remover_cofre(&pasta.join("device.token.tmp"))?;
     let probe = pasta.join("device.token.probe");
-    let _ = std::fs::remove_file(&probe);
+    remover_cofre(&probe)?;
     {
         use std::io::Write;
         let mut f = std::fs::OpenOptions::new()
@@ -102,8 +123,18 @@ pub fn ensaio() -> Result<(), ErroCofre> {
             .map_err(|e| ErroCofre::Falha(format!("sem escrita no cofre: {e}")))?;
         f.write_all(b"ok").map_err(|e| ErroCofre::Falha(e.to_string()))?;
     }
+    // Limpeza do nosso próprio probe: best-effort (sobra é inofensiva, o próximo ensaio remove).
     let _ = std::fs::remove_file(&probe);
     Ok(())
+}
+
+/// Remove um arquivo do cofre: Ok se já não existe, Falha se existe e não saiu (dono alheio).
+fn remover_cofre(p: &std::path::Path) -> Result<(), ErroCofre> {
+    match std::fs::remove_file(p) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(ErroCofre::Falha(format!("não removeu {}: {e}", p.display()))),
+    }
 }
 
 /// Lê o token. `NaoEnrolado` se o arquivo não existe.
@@ -127,6 +158,21 @@ pub fn apagar() {
 
 // ----- Windows: DPAPI de máquina + ACL -----
 
+/// Recusa a pasta do cofre se ela for um ponto de reparse (junction/symlink). `symlink_metadata`
+/// não segue o último componente, então o atributo aparece no próprio alvo. Três linhas de B1:
+/// sem isso um atacante apontaria `%ProgramData%\ApiceGestor` pra fora e o cofre escreveria lá.
+#[cfg(windows)]
+fn recusar_reparse(pasta: &std::path::Path) -> Result<(), ErroCofre> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    let meta = std::fs::symlink_metadata(pasta)
+        .map_err(|e| ErroCofre::Falha(format!("symlink_metadata: {e}")))?;
+    if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(ErroCofre::Falha("pasta é junction/symlink".into()));
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 /// Herança desligada, dono = Administradores (S-1-5-32-544), e só SYSTEM (S-1-5-18) e
 /// Administradores no DACL. SID em vez do nome (localizado). `arquivo`=false aplica a herança
@@ -134,9 +180,11 @@ pub fn apagar() {
 ///
 /// Duas causas distintas, as duas tratadas aqui:
 ///
-/// 1. A falha na bancada (Vinny) era SINTAXE: `/setowner` junto de `/inheritance`+`/grant` numa
+/// 1. A 1ª falha na bancada (Vinny) era SINTAXE: `/setowner` junto de `/inheritance`+`/grant` numa
 ///    chamada só dá erro 87 ("Invalid parameter") em QUALQUER Windows. Por isso as DUAS chamadas
-///    separadas abaixo. O teste de um clique da CI não pegava porque `base_url()` roda ANTES de
+///    separadas abaixo. A 2ª falha foi erro 5 ("Acesso negado") do `/setowner /T` recursando sobre
+///    um arquivo aberto na pasta compartilhada — resolvido tirando o /T (ver o bloco "SEM /T" mais
+///    abaixo). O teste de um clique da CI não pegava a 1ª porque `base_url()` roda ANTES de
 ///    `ensaio()` em `api::enrolar` e aquele build não tem endereço: saía 4 antes de encostar no
 ///    cofre. Quem pega agora é o gate de cofre dedicado (porta fechada, exige saída 4 e nenhum
 ///    `cofre:` no stderr).
@@ -154,19 +202,19 @@ fn fechar_acl(alvo: &std::path::Path, arquivo: bool) -> Result<(), ErroCofre> {
     let raiz = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     let icacls = format!(r"{raiz}\System32\icacls.exe");
     let heranca = if arquivo { "F" } else { "(OI)(CI)F" };
-    // Num objeto único o /T não faz nada; na pasta ele recai no conteúdo. Sem /C: se o icacls
-    // tropeçar em algo plantado dentro, melhor Falha do que seguir mascarando o erro.
-    let recursivo = !arquivo;
 
+    // SEM /T de propósito: a pasta é COMPARTILHADA — o serviço mantém o servico.log ABERTO, o
+    // instalar.log vem do ps1 não elevado, e há msi-*.log. Recursar com /setowner bateria num
+    // arquivo aberto/alheio e sairia com 5 ("Acesso negado") — foi o que a bancada pegou no
+    // f90b27d. O device.token é travado À PARTE por fechar_acl(arquivo, true); a herança (OI)(CI)
+    // na pasta faz os filhos NOVOS (token, probe) nascerem já só com SYSTEM + Administradores.
+    //
     // Roda UMA invocação do icacls e, no erro, diz QUAL etapa falhou (setowner|acl) e carrega a
     // saída dele (caminho + mensagem do Windows, sem segredo) pra o log da Esteira não mostrar só
     // a frase genérica e a gente não voltar cega se o Vinny falhar de novo.
     let rodar = |etapa: &str, args: &[&str]| -> Result<(), ErroCofre> {
         let mut cmd = Command::new(&icacls);
         cmd.arg(alvo).args(args);
-        if recursivo {
-            cmd.arg("/T");
-        }
         let saida = cmd
             .creation_flags(SEM_JANELA)
             .output()
@@ -191,11 +239,11 @@ fn fechar_acl(alvo: &std::path::Path, arquivo: bool) -> Result<(), ErroCofre> {
     };
 
     // DUAS chamadas, NESTA ORDEM, com check de saída em cada: `/setowner` é uma FORMA SEPARADA da
-    // linha do icacls — `icacls <alvo> /setowner <sid> [/T] [/C]`. Misturar com /inheritance|/grant
-    // dá erro 87 ("Invalid parameter") em QUALQUER Windows (foi o que o gate do cofre pegou; o
-    // ac878b1 ainda juntava tudo numa chamada só).
+    // linha do icacls — `icacls <alvo> /setowner <sid>`. Misturar com /inheritance|/grant dá erro
+    // 87 ("Invalid parameter") em QUALQUER Windows (foi o que o gate do cofre pegou; o ac878b1
+    // ainda juntava tudo numa chamada só).
     // A ORDEM importa: o /setowner dá a POSSE, e a posse dá WRITE_DAC implícito, então a 2ª chamada
-    // reescreve o DACL MESMO numa pasta pré-criada por outro usuário.
+    // reescreve o DACL MESMO num alvo pré-criado por outro usuário.
     // (1) dono = Administradores (ver acima: dispensa SeRestorePrivilege do admin elevado).
     rodar("setowner", &["/setowner", "*S-1-5-32-544"])?;
     // (2) herança desligada e DACL só SYSTEM + Administradores.
