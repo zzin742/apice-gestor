@@ -64,7 +64,8 @@
 .NOTES
   Salvo em UTF-8 COM BOM: sem BOM o Windows PowerShell 5.1 lê como ANSI e estraga os acentos.
   Saídas: 0 ok · 1 erro na etapa da máquina · 2 código recusado (inválido/expirado/usado, ou
-  formato inválido) · 3 limite de tentativas · 4 sem conexão com o Hub · 5 outro erro no enrolamento.
+  formato inválido) · 3 limite de tentativas · 4 sem conexão com o Hub · 5 outro erro no enrolamento ·
+  6 o cofre da máquina não pôde ser protegido (não é rede).
 #>
 [CmdletBinding()]
 param(
@@ -411,7 +412,8 @@ function EtapaRemocao {
 # --enrolar sem elevação falha (não consegue fechar a ACL da pasta). As 3 regras do rate limit valem
 # igual.
 # Saídas do enrolamento (iguais às do --enrolar, e as do script com -Codigo):
-#   0 enrolado (ou já estava) · 2 código recusado · 3 limite de tentativas · 4 sem conexão · 5 outro
+#   0 enrolado (ou já estava) · 2 código recusado · 3 limite de tentativas · 4 sem conexão · 5 outro ·
+#   6 cofre da máquina não protegido (ACL/IO; o motivo está nas linhas "--enrolar (stderr)")
 $SaidaCodigoRecusado = 2
 
 # Uma chamada ao --enrolar com um código. O 429 é esperado dentro do executável (até 3x, teto 300 s).
@@ -452,6 +454,8 @@ function TentarCodigo([string]$codigo) {
         2 { Escrever 'Código recusado pelo Hub (inválido, expirado ou já usado). Gere um código NOVO em /admin/dispositivos; este não será tentado de novo.' 'Red'; return 2 }
         3 { Escrever 'Limite de tentativas do escritório atingido (muitos PCs ao mesmo tempo). Espere uns 5 minutos e rode de novo com o MESMO código: ele ainda vale.' 'Red'; return 3 }
         4 { Escrever "Sem conexão com o Hub ($texto). Confira a rede e rode de novo com o mesmo código." 'Red'; return 4 }
+        # Não é rede: o ensaio do cofre falhou antes de o código ir ao Hub, então o código continua valendo.
+        6 { Escrever "O cofre da máquina não pôde ser protegido. Veja a linha do --enrolar (stderr) no instalar.log. Se a pasta $PastaLog existir com dono estranho, apague-a como administrador e repita." 'Red'; return 6 }
         default { Escrever "Erro no enrolamento (saída $($p.ExitCode)): $texto. Avise o responsável pelo piloto." 'Red'; return 5 }
     }
 }

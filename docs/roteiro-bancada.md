@@ -87,6 +87,7 @@ Saia dessa conta e volte para a do Vinny.
 | `3` | limite de tentativas do escritório | espere 5 min e rode de novo com o **mesmo** código |
 | `4` | sem conexão com o Hub | volte ao passo 1 (e ao "Hub pronto" do passo 0); depois, mesmo código |
 | `5` | outro erro no enrolamento | pare e anote o texto |
+| `6` | o cofre da máquina não pôde ser protegido (não é rede) | pare e anote a linha `--enrolar (stderr)` do `instalar.log`; se a pasta `%ProgramData%\ApiceGestor` existir com dono estranho, apague-a como administrador e repita (o código ainda vale) |
 
 **2.3. Conferir** (PowerShell **de administrador**):
 
