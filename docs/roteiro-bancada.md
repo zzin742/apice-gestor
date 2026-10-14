@@ -10,21 +10,29 @@ Qualquer passo que der diferente do esperado: **pare, anote (seção 9) e não t
 ## O que você recebe
 
 O **pacote de um clique**, artefato da **run manual do build-msi** que o Vigia indicou:
-**run [38416900183](https://github.com/zzin742/apice-gestor/actions/runs/38416900183)**
-(`feat/servico` `7c3fb92`), artefato `apice-gestor-msi-7c3fb92ad50d52672ae4b1b8527779ad428a9200-com-api`. Baixe o `.zip` da seção *Artifacts* da run e extraia
+**run [38576002121](https://github.com/zzin742/apice-gestor/actions/runs/38576002121)**
+(`feat/servico` `f90b27d`), artefato `apice-gestor-msi-f90b27dfcf2316506bd75c0a6067c4aaefb1e8eb-com-api`. Baixe o `.zip` da seção *Artifacts* da run e extraia
 numa pasta (ex.: `C:\ApiceBancada`). Dentro:
 
 | Arquivo | O que é |
 |---|---|
 | `apice-gestor_0.1.0_x64.msi` | o app + o **serviço do Windows** "Ápice Gestor" (SYSTEM, início automático), falando com o Hub de produção (`https://www.apicehub.com.br/api/gestor`) |
-| `SHA256SUMS.txt` | o hash do `.msi` (o instalador confere sozinho). SHA-256 do `.msi`: `23cef5b5c36487455b5ae4066f895397a82bf80b43bf457edc195f6841d68141` |
+| `SHA256SUMS.txt` | o hash do `.msi` (o instalador confere sozinho). SHA-256 do `.msi`: `817f2616d505c4cadd0e8c6d2043dad1c541786f8cde7885524e18526cc1af3f` |
 | `instalar.cmd` | **o um clique**. SHA-256: `a595fe6e6be3de7f45a1f6a24da773848f23ad9b25b9f9943b620e9ece9eb135` |
-| `instalar.ps1` | o instalador que o `instalar.cmd` chama. SHA-256: `7ba3bf9534300b7335b51a70bec851e19a279bb974d1d5100e5a69b0d62e5208` |
+| `instalar.ps1` | o instalador que o `instalar.cmd` chama. SHA-256: `38233808d42441b5a89b29fe20fdbdf90e7ad99de34247bab1c7f0f5d5386f11` |
 
 Para conferir os arquivos depois de extrair (PowerShell, na pasta):
 `Get-FileHash .\* -Algorithm SHA256 | Format-Table Hash, Path`. Os SHA dos dois scripts são **os do
 pacote** (com quebra de linha do Windows); calculados direto do repositório dão outro número, e
 isso é esperado.
+
+> **Pacote anterior SUPERADO — não use:** run 38416900183 (`7c3fb92`, `.msi` `23cef5b5…`). Ele
+> falhava no enrolamento (o cofre não fechava a ACL: erro 87 do `icacls`). Este pacote traz o
+> conserto do cofre, a saída **6** (cofre) separada da **4** (rede) e o motivo do erro do cofre no
+> `instalar.log`, nas linhas `--enrolar (stderr)`. Se o PC já tem o pacote antigo, o passo 0
+> começa pelo `-Desinstalar -RemoverToken` como sempre; a pasta `%ProgramData%\ApiceGestor` que
+> ficou da tentativa anterior pode continuar lá (o enrolamento novo assume a posse dela). Se
+> mesmo assim sair **6**, siga a linha 6 da tabela de saídas do passo 2.
 
 E **um código de enrolamento**, gerado pelo José Luiz em
 `https://www.apicehub.com.br/admin/dispositivos` (24 h, uso único, aparece uma vez só: anote em
