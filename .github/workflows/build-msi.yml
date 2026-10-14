@@ -322,6 +322,44 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Gate do land (exigência 4 do Diretor): o ensaio() do cofre tem que passar ANTES da rede. O
+      # bug da bancada (setowner do fechar_acl) não aparecia no CI porque, sem endereço, o --enrolar
+      # para em "endereço não configurado" antes do cofre. Aqui o app é recompilado (depois do
+      # upload: o artefato não muda) com um endereço de porta FECHADA; o --enrolar passa pelo cofre,
+      # falha na conexão e tem que sair 4, sem nenhuma linha "cofre:" no stderr. Roda duas vezes:
+      # pasta do cofre nova e pasta já existente (como na bancada). O runner é administrador.
+      - name: Cofre antes da rede (--enrolar contra porta fechada)
+        shell: pwsh
+        run: |
+          $env:GESTOR_API_BASE = 'http://127.0.0.1:9/api/gestor'
+          npx tauri build --no-bundle
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force cofre-teste | Out-Null
+          Copy-Item src-tauri/target/release/apice-gestor.exe cofre-teste/
+          $exe   = (Resolve-Path cofre-teste/apice-gestor.exe).Path
+          $pasta = Join-Path $env:ProgramData 'ApiceGestor'
+          $cofre = Join-Path $pasta 'device.token'
+          Remove-Item -LiteralPath $pasta -Recurse -Force -ErrorAction SilentlyContinue
+          foreach ($caso in 'pasta nova', 'pasta existente') {
+            $out = Join-Path $env:RUNNER_TEMP 'cofre-out.txt'
+            $err = Join-Path $env:RUNNER_TEMP 'cofre-err.txt'
+            $p = Start-Process -FilePath $exe -ArgumentList '--enrolar', 'TESTE-CI-0003' -Wait -PassThru -NoNewWindow `
+              -RedirectStandardOutput $out -RedirectStandardError $err
+            $stdout = @(Get-Content $out -Encoding UTF8 -ErrorAction SilentlyContinue)
+            $stderr = @(Get-Content $err -Encoding UTF8 -ErrorAction SilentlyContinue)
+            "[$caso] saida $($p.ExitCode)"
+            $stdout | ForEach-Object { "  stdout: $_" }
+            $stderr | ForEach-Object { "  stderr: $_" }
+            if (@($stderr -match '^\s*cofre:').Count) { throw "[$caso] o ensaio do cofre falhou (linha cofre: no stderr)" }
+            if ($p.ExitCode -ne 4) { throw "[$caso] --enrolar contra porta fechada devia sair 4 (sem conexao), saiu $($p.ExitCode)" }
+            if (Test-Path -LiteralPath $cofre) { throw "[$caso] cofre gravado sem enrolar" }
+            if (Test-Path -LiteralPath "$cofre.probe") { throw "[$caso] o ensaio deixou o device.token.probe" }
+            # Dono da pasta = Administradores (S-1-5-32-544), o conserto do setowner (ac878b1).
+            $dono = (Get-Acl -LiteralPath $pasta).GetOwner([Security.Principal.SecurityIdentifier]).Value
+            if ($dono -ne 'S-1-5-32-544') { throw "[$caso] dono da pasta do cofre e $dono, devia ser Administradores (S-1-5-32-544)" }
+            "[$caso] ok: saida 4, ensaio do cofre passou antes da rede, dono Administradores, sem token gravado"
+          }
+
   # O instalar.ps1 roda no Windows PowerShell 5.1 (o que vem no Windows 10 da bancada). Aqui só se
   # confere que ele é lido inteiro por esse PowerShell (sintaxe e BOM) e passa no PSScriptAnalyzer.
   instalar-ps1:
