@@ -128,9 +128,16 @@ pub fn apagar() {
 // ----- Windows: DPAPI de máquina + ACL -----
 
 #[cfg(windows)]
-/// Herança desligada, dono = SYSTEM, e só SYSTEM (S-1-5-18) e Administradores (S-1-5-32-544).
-/// SID em vez do nome (localizado). `arquivo`=false aplica a herança de contêiner na pasta (OI)(CI);
-/// true é o device.token (sem (OI)(CI)). O --enrolar roda elevado, então o /setowner tem posse.
+/// Herança desligada, dono = Administradores (S-1-5-32-544), e só SYSTEM (S-1-5-18) e
+/// Administradores no DACL. SID em vez do nome (localizado). `arquivo`=false aplica a herança
+/// de contêiner na pasta (OI)(CI); true é o device.token (sem (OI)(CI)).
+///
+/// Dono = Administradores, NÃO SYSTEM: o --enrolar roda como o admin ELEVADO, que é membro de
+/// Administradores. O icacls NÃO liga SeRestorePrivilege sozinho, então /setowner para OUTRA
+/// conta (SYSTEM) dava "acesso negado" na bancada (não aparece na CI, que roda sem sessão de
+/// usuário). /setowner para um grupo do qual o chamador é membro dispensa SeRestorePrivilege.
+/// O B1 do Diretor já permitia S-1-5-18 OU S-1-5-32-544; o furo fica fechado igual — usuário
+/// comum continua sem ser dono e fora do DACL.
 fn fechar_acl(alvo: &std::path::Path, arquivo: bool) -> Result<(), ErroCofre> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
@@ -139,7 +146,7 @@ fn fechar_acl(alvo: &std::path::Path, arquivo: bool) -> Result<(), ErroCofre> {
     let icacls = format!(r"{raiz}\System32\icacls.exe");
     let heranca = if arquivo { "F" } else { "(OI)(CI)F" };
     let mut cmd = Command::new(icacls);
-    cmd.arg(alvo).args(["/setowner", "*S-1-5-18"]);
+    cmd.arg(alvo).args(["/setowner", "*S-1-5-32-544"]);
     if !arquivo {
         // Num objeto único o /T não faz nada; na pasta recai no conteúdo. Sem /C: se o icacls
         // tropeçar em algo plantado dentro, melhor Falha do que seguir mascarando o erro.
