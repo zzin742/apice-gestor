@@ -138,8 +138,8 @@ pub fn apagar() {
 ///    chamada só dá erro 87 ("Invalid parameter") em QUALQUER Windows. Por isso as DUAS chamadas
 ///    separadas abaixo. O teste de um clique da CI não pegava porque `base_url()` roda ANTES de
 ///    `ensaio()` em `api::enrolar` e aquele build não tem endereço: saía 4 antes de encostar no
-///    cofre. Quem pega agora é o gate de cofre dedicado (porta fechada, exige a saída de cofre e
-///    nenhum `cofre:` no stderr).
+///    cofre. Quem pega agora é o gate de cofre dedicado (porta fechada, exige saída 4 e nenhum
+///    `cofre:` no stderr).
 ///
 /// 2. Dono = Administradores (S-1-5-32-544), NÃO SYSTEM, MESMO com o comando bem formado: o
 ///    --enrolar roda como o admin ELEVADO, que é membro de Administradores; o icacls NÃO liga
