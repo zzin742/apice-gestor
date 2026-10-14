@@ -132,15 +132,21 @@ pub fn apagar() {
 /// Administradores no DACL. SID em vez do nome (localizado). `arquivo`=false aplica a herança
 /// de contêiner na pasta (OI)(CI); true é o device.token (sem (OI)(CI)).
 ///
-/// Dono = Administradores, NÃO SYSTEM: o --enrolar roda como o admin ELEVADO, que é membro de
-/// Administradores. O icacls NÃO liga SeRestorePrivilege sozinho, então /setowner para OUTRA
-/// conta (SYSTEM) dava "acesso negado" na bancada. /setowner para um grupo do qual o chamador
-/// é membro dispensa SeRestorePrivilege. O B1 do Diretor já permitia S-1-5-18 OU S-1-5-32-544;
-/// o furo fica fechado igual — usuário comum continua sem ser dono e fora do DACL.
+/// Duas causas distintas, as duas tratadas aqui:
 ///
-/// A CI não pegou o bug porque `base_url()` roda ANTES de `ensaio()` em `api::enrolar` e o teste
-/// de um clique usa o build SEM endereço: ele sai 4 antes de encostar no cofre. O runner é admin
-/// sem SeRestore e reproduziria o "acesso negado" se o teste chegasse até aqui.
+/// 1. A falha na bancada (Vinny) era SINTAXE: `/setowner` junto de `/inheritance`+`/grant` numa
+///    chamada só dá erro 87 ("Invalid parameter") em QUALQUER Windows. Por isso as DUAS chamadas
+///    separadas abaixo. O teste de um clique da CI não pegava porque `base_url()` roda ANTES de
+///    `ensaio()` em `api::enrolar` e aquele build não tem endereço: saía 4 antes de encostar no
+///    cofre. Quem pega agora é o gate de cofre dedicado (porta fechada, exige a saída de cofre e
+///    nenhum `cofre:` no stderr).
+///
+/// 2. Dono = Administradores (S-1-5-32-544), NÃO SYSTEM, MESMO com o comando bem formado: o
+///    --enrolar roda como o admin ELEVADO, que é membro de Administradores; o icacls NÃO liga
+///    SeRestorePrivilege sozinho, então `/setowner` para OUTRA conta (SYSTEM) daria acesso negado,
+///    enquanto para um grupo do qual o chamador é membro dispensa esse privilégio. O B1 do Diretor
+///    já permitia S-1-5-18 OU S-1-5-32-544; o furo fica fechado igual — o DACL abaixo só concede
+///    SYSTEM + Administradores, então usuário comum continua sem ser dono e fora do DACL.
 fn fechar_acl(alvo: &std::path::Path, arquivo: bool) -> Result<(), ErroCofre> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
@@ -148,25 +154,26 @@ fn fechar_acl(alvo: &std::path::Path, arquivo: bool) -> Result<(), ErroCofre> {
     let raiz = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     let icacls = format!(r"{raiz}\System32\icacls.exe");
     let heranca = if arquivo { "F" } else { "(OI)(CI)F" };
-    let mut cmd = Command::new(icacls);
-    cmd.arg(alvo).args(["/setowner", "*S-1-5-32-544"]);
-    if !arquivo {
-        // Num objeto único o /T não faz nada; na pasta recai no conteúdo. Sem /C: se o icacls
-        // tropeçar em algo plantado dentro, melhor Falha do que seguir mascarando o erro.
-        cmd.arg("/T");
-    }
-    let saida = cmd
-        .args(["/inheritance:r"])
-        .args(["/grant:r", &format!("*S-1-5-18:{heranca}")])
-        .args(["/grant:r", &format!("*S-1-5-32-544:{heranca}")])
-        .creation_flags(SEM_JANELA)
-        .output()
-        .map_err(|e| ErroCofre::Falha(format!("icacls: {e}")))?;
-    if saida.status.success() {
-        Ok(())
-    } else {
-        // Inclui a saída do icacls (caminho + mensagem do Windows, sem segredo) pra o log da
-        // Esteira não mostrar só a frase genérica e a gente não voltar cego se o Vinny falhar.
+    // Num objeto único o /T não faz nada; na pasta ele recai no conteúdo. Sem /C: se o icacls
+    // tropeçar em algo plantado dentro, melhor Falha do que seguir mascarando o erro.
+    let recursivo = !arquivo;
+
+    // Roda UMA invocação do icacls e, no erro, diz QUAL etapa falhou (setowner|acl) e carrega a
+    // saída dele (caminho + mensagem do Windows, sem segredo) pra o log da Esteira não mostrar só
+    // a frase genérica e a gente não voltar cega se o Vinny falhar de novo.
+    let rodar = |etapa: &str, args: &[&str]| -> Result<(), ErroCofre> {
+        let mut cmd = Command::new(&icacls);
+        cmd.arg(alvo).args(args);
+        if recursivo {
+            cmd.arg("/T");
+        }
+        let saida = cmd
+            .creation_flags(SEM_JANELA)
+            .output()
+            .map_err(|e| ErroCofre::Falha(format!("{etapa}: icacls não rodou: {e}")))?;
+        if saida.status.success() {
+            return Ok(());
+        }
         let mut texto = String::from_utf8_lossy(&saida.stderr).trim().to_string();
         let out = String::from_utf8_lossy(&saida.stdout);
         let out = out.trim();
@@ -177,10 +184,33 @@ fn fechar_acl(alvo: &std::path::Path, arquivo: bool) -> Result<(), ErroCofre> {
             texto.push_str(out);
         }
         Err(ErroCofre::Falha(format!(
-            "icacls saiu {:?}: {texto}",
+            "{etapa} (icacls {}) saiu {:?}: {texto}",
+            args.join(" "),
             saida.status.code()
         )))
-    }
+    };
+
+    // DUAS chamadas, NESTA ORDEM, com check de saída em cada: `/setowner` é uma FORMA SEPARADA da
+    // linha do icacls — `icacls <alvo> /setowner <sid> [/T] [/C]`. Misturar com /inheritance|/grant
+    // dá erro 87 ("Invalid parameter") em QUALQUER Windows (foi o que o gate do cofre pegou; o
+    // ac878b1 ainda juntava tudo numa chamada só).
+    // A ORDEM importa: o /setowner dá a POSSE, e a posse dá WRITE_DAC implícito, então a 2ª chamada
+    // reescreve o DACL MESMO numa pasta pré-criada por outro usuário.
+    // (1) dono = Administradores (ver acima: dispensa SeRestorePrivilege do admin elevado).
+    rodar("setowner", &["/setowner", "*S-1-5-32-544"])?;
+    // (2) herança desligada e DACL só SYSTEM + Administradores.
+    let g_sys = format!("*S-1-5-18:{heranca}");
+    let g_adm = format!("*S-1-5-32-544:{heranca}");
+    rodar(
+        "acl",
+        &[
+            "/inheritance:r",
+            "/grant:r",
+            g_sys.as_str(),
+            "/grant:r",
+            g_adm.as_str(),
+        ],
+    )
 }
 
 #[cfg(windows)]

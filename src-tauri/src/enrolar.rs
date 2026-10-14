@@ -11,8 +11,9 @@ use crate::api;
 pub const SAIDA_OK: i32 = 0;
 const SAIDA_CODIGO: i32 = 2; // invalid_code, code_expired, code_used: pedir código novo
 const SAIDA_LIMITE: i32 = 3; // rate_limited depois de esperar
-const SAIDA_CONEXAO: i32 = 4; // unavailable, server_error
-const SAIDA_OUTRO: i32 = 5; // invalid_request, excluded_account, keychain…
+const SAIDA_CONEXAO: i32 = 4; // unavailable, server_error: conferir REDE
+const SAIDA_OUTRO: i32 = 5; // invalid_request, excluded_account…
+const SAIDA_COFRE: i32 = 6; // cofre_falhou: proteger o cofre da máquina falhou (NÃO é rede)
 pub const SAIDA_USO: i32 = 64;
 
 /// Tentativas quando o Hub responde `429` (os 95 PCs saem pelo mesmo IP, contrato §2).
@@ -46,6 +47,9 @@ pub fn executar(codigo: &str) -> i32 {
                     }
                     "rate_limited" => return SAIDA_LIMITE,
                     "unavailable" | "server_error" => return SAIDA_CONEXAO,
+                    // Falha de cofre NÃO é rede: saída própria pra o instalar.ps1 não mandar o
+                    // José conferir a rede. O motivo detalhado já foi pro stderr como "cofre: …".
+                    "cofre_falhou" => return SAIDA_COFRE,
                     _ => return SAIDA_OUTRO,
                 }
             }

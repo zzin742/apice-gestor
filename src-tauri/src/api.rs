@@ -263,7 +263,7 @@ pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
             eprintln!("cofre: {motivo}");
         }
         ErroApi::novo(
-            "server_error",
+            "cofre_falhou",
             "Não foi possível proteger o cofre; execute o enrolamento como administrador.",
         )
     })?;
@@ -294,7 +294,7 @@ pub async fn enrolar(codigo: &str, device: Value) -> Result<Enrolado, ErroApi> {
             eprintln!("cofre: {motivo}");
         }
         ErroApi::novo(
-            "server_error",
+            "cofre_falhou",
             "Não foi possível proteger o cofre; execute o enrolamento como administrador.",
         )
     })?;
@@ -369,7 +369,7 @@ fn erro_cofre(e: crate::cofre::ErroCofre) -> ErroApi {
 }
 
 fn falha_cofre() -> ErroApi {
-    ErroApi::novo("server_error", "Não foi possível usar o cofre de credenciais da máquina.")
+    ErroApi::novo("cofre_falhou", "Não foi possível usar o cofre de credenciais da máquina.")
 }
 
 fn ler_token() -> Result<String, ErroApi> {
