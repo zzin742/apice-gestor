@@ -326,13 +326,23 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Gate do land (exigência 4 do Diretor): o ensaio() do cofre tem que passar ANTES da rede. O
-      # bug da bancada (setowner do fechar_acl) não aparecia no CI porque, sem endereço, o --enrolar
-      # para em "endereço não configurado" antes do cofre. Aqui o app é recompilado (depois do
-      # upload: o artefato não muda) com um endereço de porta FECHADA; o --enrolar passa pelo cofre,
-      # falha na conexão e tem que sair 4, sem nenhuma linha "cofre:" no stderr. Roda duas vezes:
-      # pasta do cofre nova e pasta já existente (como na bancada). O runner é administrador.
-      - name: Cofre antes da rede (--enrolar contra porta fechada)
+      # Gate do land (exigências do Diretor): o ensaio() do cofre tem que passar ANTES da rede, e não
+      # pode tropeçar no que já está na pasta. Sem endereço, o --enrolar para em "endereço não
+      # configurado" antes do cofre; aqui o app é recompilado (depois do upload: o artefato não muda)
+      # com um endereço de porta FECHADA. Cada caso começa da pasta limpa e diz o nome no erro:
+      #   G0  pasta nova e pasta existente: saída 4, zero "cofre:", dono da pasta = Administradores.
+      #   G1  o Vinny (f90b27d): instalar.log e servico.log com DACL hostil (dono = runner, só SYSTEM,
+      #       sem WRITE_OWNER para Administradores). Controle: o setowner /T antigo tem que falhar ali.
+      #       Exige saída 4, zero "cofre:", dono da pasta 544 e os dois arquivos intactos.
+      #   G2  servico.log aberto com FileShare.None durante o --enrolar: saída 4. Controle com ele
+      #       aberto: setowner direto nele passa (o erro 5 do Vinny é permissão, não compartilhamento).
+      #   G3  device.token.tmp e device.token.probe pré-plantados: saída 4 e os dois somem.
+      #   G4  device.token pré-plantado com DACL hostil: saída 6, "cofre:" com setowner no stderr,
+      #       sem device.token.tmp (falha fechada ANTES do POST).
+      #   G5  ApiceGestor como junction para outra pasta: saída 6 com o motivo (junction), nada
+      #       escrito no alvo e o ACL do alvo intacto.
+      # O runner é administrador.
+      - name: Cofre antes da rede (--enrolar contra porta fechada, G0-G5)
         shell: pwsh
         run: |
           $env:GESTOR_API_BASE = 'http://127.0.0.1:9/api/gestor'
@@ -343,26 +353,166 @@ jobs:
           $exe   = (Resolve-Path cofre-teste/apice-gestor.exe).Path
           $pasta = Join-Path $env:ProgramData 'ApiceGestor'
           $cofre = Join-Path $pasta 'device.token'
-          Remove-Item -LiteralPath $pasta -Recurse -Force -ErrorAction SilentlyContinue
-          foreach ($caso in 'pasta nova', 'pasta existente') {
+          $adm   = 'S-1-5-32-544'
+          $sys   = 'S-1-5-18'
+          $eu    = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          $sid   = [Security.Principal.SecurityIdentifier]
+
+          # Volta ao zero: toma a posse (takeown liga o privilégio), reseta o ACL e apaga. Junction
+          # sai com rmdir (não segue o link).
+          function Limpar([string]$alvo) {
+            if (-not (Test-Path -LiteralPath $alvo)) { return }
+            if ((Get-Item -LiteralPath $alvo -Force).LinkType) { cmd /c rmdir "$alvo"; return }
+            takeown /F $alvo /R /A /D Y *> $null
+            icacls $alvo /reset /T /C /Q *> $null
+            Remove-Item -LiteralPath $alvo -Recurse -Force
+            if (Test-Path -LiteralPath $alvo) { throw "nao consegui limpar $alvo" }
+          }
+          # Quem aparece no DACL (SIDs, sem repetir).
+          function Quem([string]$arq) {
+            @((Get-Acl -LiteralPath $arq).GetAccessRules($true, $true, $sid) |
+              ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)
+          }
+          # Arquivo hostil: dono = runner (não Administradores) e DACL protegida só com SYSTEM.
+          function Hostil([string]$arq) {
+            Set-Content -LiteralPath $arq -Value 'plantado pelo gate' -Encoding utf8
+            icacls $arq /setowner "*$eu" /Q | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "nao consegui pôr o dono em $arq" }
+            icacls $arq /inheritance:r /grant:r "*${sys}:F" /Q | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "nao consegui fechar o ACL de $arq" }
+            # /inheritance:r tira só o HERDADO. Na run 38601784876 (arquivo no RUNNER_TEMP) Administradores
+            # sobreviveu a ele: havia ACE explícita. Tudo que não é SYSTEM sai uma a uma; o runner é o
+            # dono, então tem WRITE_DAC implícito pra isso.
+            foreach ($s in (Quem $arq | Where-Object { $_ -ne $sys })) {
+              icacls $arq /remove "*$s" /Q | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw "nao consegui tirar $s do ACL de $arq" }
+            }
+            $a = Get-Acl -LiteralPath $arq
+            if ($a.GetOwner($sid).Value -ne $eu) { throw "pre-condicao: dono de $arq nao e o runner: $($a.Sddl)" }
+            if (-not $a.AreAccessRulesProtected) { throw "pre-condicao: $arq ainda herda: $($a.Sddl)" }
+            $quem = (Quem $arq) -join ','
+            if ($quem -ne $sys) { throw "pre-condicao: DACL de $arq devia ser so SYSTEM, e ${quem}: $($a.Sddl)" }
+          }
+          function Sddl([string]$arq) { (Get-Acl -LiteralPath $arq).Sddl }
+          function Enrolar([string]$caso) {
             $out = Join-Path $env:RUNNER_TEMP 'cofre-out.txt'
             $err = Join-Path $env:RUNNER_TEMP 'cofre-err.txt'
             $p = Start-Process -FilePath $exe -ArgumentList '--enrolar', 'TESTE-CI-0003' -Wait -PassThru -NoNewWindow `
               -RedirectStandardOutput $out -RedirectStandardError $err
-            $stdout = @(Get-Content $out -Encoding UTF8 -ErrorAction SilentlyContinue)
-            $stderr = @(Get-Content $err -Encoding UTF8 -ErrorAction SilentlyContinue)
-            "[$caso] saida $($p.ExitCode)"
-            $stdout | ForEach-Object { "  stdout: $_" }
-            $stderr | ForEach-Object { "  stderr: $_" }
-            if (@($stderr -match '^\s*cofre:').Count) { throw "[$caso] o ensaio do cofre falhou (linha cofre: no stderr)" }
-            if ($p.ExitCode -ne 4) { throw "[$caso] --enrolar contra porta fechada devia sair 4 (sem conexao), saiu $($p.ExitCode)" }
-            if (Test-Path -LiteralPath $cofre) { throw "[$caso] cofre gravado sem enrolar" }
-            if (Test-Path -LiteralPath "$cofre.probe") { throw "[$caso] o ensaio deixou o device.token.probe" }
-            # Dono da pasta = Administradores (S-1-5-32-544), o conserto do setowner (ac878b1).
-            $dono = (Get-Acl -LiteralPath $pasta).GetOwner([Security.Principal.SecurityIdentifier]).Value
-            if ($dono -ne 'S-1-5-32-544') { throw "[$caso] dono da pasta do cofre e $dono, devia ser Administradores (S-1-5-32-544)" }
-            "[$caso] ok: saida 4, ensaio do cofre passou antes da rede, dono Administradores, sem token gravado"
+            $r = [pscustomobject]@{
+              Saida  = $p.ExitCode
+              Stdout = @(Get-Content $out -Encoding UTF8 -ErrorAction SilentlyContinue)
+              Stderr = @(Get-Content $err -Encoding UTF8 -ErrorAction SilentlyContinue)
+            }
+            # Write-Host: o que vai ao pipeline vira o retorno da função.
+            Write-Host "[$caso] saida $($r.Saida)"
+            $r.Stdout | ForEach-Object { Write-Host "  stdout: $_" }
+            $r.Stderr | ForEach-Object { Write-Host "  stderr: $_" }
+            $r
           }
+          function Exigir([bool]$ok, [string]$caso, [string]$msg) { if (-not $ok) { throw "[$caso] $msg" } }
+          function LinhasCofre($r) { @($r.Stderr -match '^\s*cofre:') }
+          function DonoPasta { (Get-Acl -LiteralPath $pasta).GetOwner($sid).Value }
+          function Passou([string]$caso, $r) {
+            Exigir ((LinhasCofre $r).Count -eq 0) $caso 'o ensaio do cofre falhou (linha cofre: no stderr)'
+            Exigir ($r.Saida -eq 4) $caso "devia sair 4 (sem conexao), saiu $($r.Saida)"
+            Exigir (-not (Test-Path -LiteralPath $cofre)) $caso 'cofre gravado sem enrolar'
+            Exigir (-not (Test-Path -LiteralPath "$cofre.probe")) $caso 'sobrou o device.token.probe'
+            Exigir (-not (Test-Path -LiteralPath "$cofre.tmp")) $caso 'sobrou o device.token.tmp'
+            Exigir ((DonoPasta) -eq $adm) $caso "dono da pasta e $(DonoPasta), devia ser Administradores ($adm)"
+          }
+
+          # G0: pasta nova, depois a mesma pasta já existente.
+          Limpar $pasta
+          foreach ($caso in 'G0 pasta nova', 'G0 pasta existente') {
+            $r = Enrolar $caso; Passou $caso $r
+            "[$caso] ok"
+          }
+
+          # G1: o Vinny. Controle primeiro, numa cópia ao lado (mesmo ProgramData): o setowner /T do
+          # f90b27d tem que dar acesso negado NO instalar.log, não na pasta.
+          $caso = 'G1 DACL hostil (Vinny)'
+          $ctl = Join-Path $env:ProgramData 'ApiceGestor-controle-g1'
+          Limpar $ctl
+          New-Item -ItemType Directory -Force $ctl | Out-Null
+          Hostil (Join-Path $ctl 'instalar.log')
+          $saidaCtl = @(icacls $ctl /setowner "*$adm" /T 2>&1 | ForEach-Object { "$_" })
+          $rcCtl = $LASTEXITCODE
+          $saidaCtl | ForEach-Object { "  controle: $_" }
+          Exigir ($rcCtl -ne 0) $caso 'controle: o setowner /T antigo NAO falhou; o cenario nao reproduz o Vinny'
+          Exigir (@($saidaCtl -match 'instalar\.log').Count -ge 1) $caso 'controle: o setowner /T falhou, mas nao no instalar.log'
+          Limpar $ctl
+          Limpar $pasta
+          New-Item -ItemType Directory -Force $pasta | Out-Null
+          $arqs = 'instalar.log', 'servico.log' | ForEach-Object { Join-Path $pasta $_ }
+          # Tamanho e data saem da listagem da pasta: o runner, dono sem leitura, não abre o conteúdo.
+          function Marca([string]$arq) { $i = Get-Item -LiteralPath $arq -Force; "$($i.Length)|$($i.LastWriteTimeUtc.Ticks)|$(Sddl $arq)" }
+          $antes = @{}
+          foreach ($a in $arqs) { Hostil $a; $antes[$a] = Marca $a }
+          $r = Enrolar $caso; Passou $caso $r
+          foreach ($a in $arqs) {
+            Exigir (Test-Path -LiteralPath $a) $caso "$a sumiu"
+            Exigir ((Marca $a) -eq $antes[$a]) $caso "$a mudou (tamanho|data|SDDL): $($antes[$a]) -> $(Marca $a)"
+          }
+          "[$caso] ok: os dois arquivos intactos"
+
+          # G2: servico.log aberto sem compartilhamento durante o --enrolar. Controle, com ele ainda
+          # aberto: um setowner direto nele tem que passar (FileShare não bloqueia WRITE_OWNER); o erro
+          # 5 do Vinny é permissão, não arquivo aberto.
+          $caso = 'G2 servico.log aberto'
+          Limpar $pasta
+          New-Item -ItemType Directory -Force $pasta | Out-Null
+          $log = Join-Path $pasta 'servico.log'
+          $fs = [IO.File]::Open($log, 'OpenOrCreate', 'ReadWrite', 'None')
+          try {
+            $r = Enrolar $caso
+            $saidaCtl = icacls $log /setowner "*$adm" 2>&1
+            $rcCtl = $LASTEXITCODE
+          } finally { $fs.Dispose() }
+          $saidaCtl | ForEach-Object { "  controle: $_" }
+          Passou $caso $r
+          Exigir ($rcCtl -eq 0) $caso "controle: setowner no servico.log aberto saiu $rcCtl; arquivo aberto derruba o setowner"
+          "[$caso] ok"
+
+          # G3: sobras de uma tentativa interrompida.
+          $caso = 'G3 tmp e probe plantados'
+          Limpar $pasta
+          New-Item -ItemType Directory -Force $pasta | Out-Null
+          Set-Content -LiteralPath "$cofre.tmp" -Value 'sobra' -Encoding utf8
+          Set-Content -LiteralPath "$cofre.probe" -Value 'sobra' -Encoding utf8
+          $r = Enrolar $caso; Passou $caso $r
+          "[$caso] ok: os dois sumiram"
+
+          # G4: device.token com DACL hostil: falha fechada antes do POST.
+          $caso = 'G4 device.token hostil'
+          Limpar $pasta
+          New-Item -ItemType Directory -Force $pasta | Out-Null
+          Hostil $cofre
+          $r = Enrolar $caso
+          Exigir ($r.Saida -eq 6) $caso "devia sair 6 (cofre), saiu $($r.Saida)"
+          Exigir (@(LinhasCofre $r | Where-Object { $_ -match 'setowner' }).Count -ge 1) $caso 'sem linha cofre: com setowner no stderr'
+          Exigir (-not (Test-Path -LiteralPath "$cofre.tmp")) $caso 'sobrou o device.token.tmp'
+          "[$caso] ok: saida 6, falhou fechado"
+
+          # G5: a pasta do cofre é uma junction para outro lugar.
+          $caso = 'G5 junction'
+          Limpar $pasta
+          $alvo = Join-Path $env:RUNNER_TEMP 'alvo-junction'
+          Limpar $alvo
+          New-Item -ItemType Directory -Force $alvo | Out-Null
+          $sddlAlvo = Sddl $alvo
+          New-Item -ItemType Junction -Path $pasta -Target $alvo | Out-Null
+          $r = Enrolar $caso
+          Exigir ($r.Saida -eq 6) $caso "devia sair 6 (cofre), saiu $($r.Saida)"
+          Exigir (@(LinhasCofre $r | Where-Object { $_ -match '(?i)junction|reparse|jun..o|link' }).Count -ge 1) $caso 'sem o motivo (junction) na linha cofre: do stderr'
+          Exigir (@(Get-ChildItem -LiteralPath $alvo -Force).Count -eq 0) $caso 'escreveu no alvo da junction'
+          Exigir ((Sddl $alvo) -eq $sddlAlvo) $caso 'mexeu no ACL do alvo da junction'
+          Limpar $pasta
+          Limpar $alvo
+          "[$caso] ok: saida 6, nada no alvo"
+          "gate do cofre: G0-G5 verdes"
+          # Cada caso falha com throw; o $LASTEXITCODE que sobra é o da última limpeza, não um veredito.
+          exit 0
 
   # O instalar.ps1 roda no Windows PowerShell 5.1 (o que vem no Windows 10 da bancada). Aqui só se
   # confere que ele é lido inteiro por esse PowerShell (sintaxe e BOM) e passa no PSScriptAnalyzer.
