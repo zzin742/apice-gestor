@@ -134,10 +134,13 @@ pub fn apagar() {
 ///
 /// Dono = Administradores, NÃO SYSTEM: o --enrolar roda como o admin ELEVADO, que é membro de
 /// Administradores. O icacls NÃO liga SeRestorePrivilege sozinho, então /setowner para OUTRA
-/// conta (SYSTEM) dava "acesso negado" na bancada (não aparece na CI, que roda sem sessão de
-/// usuário). /setowner para um grupo do qual o chamador é membro dispensa SeRestorePrivilege.
-/// O B1 do Diretor já permitia S-1-5-18 OU S-1-5-32-544; o furo fica fechado igual — usuário
-/// comum continua sem ser dono e fora do DACL.
+/// conta (SYSTEM) dava "acesso negado" na bancada. /setowner para um grupo do qual o chamador
+/// é membro dispensa SeRestorePrivilege. O B1 do Diretor já permitia S-1-5-18 OU S-1-5-32-544;
+/// o furo fica fechado igual — usuário comum continua sem ser dono e fora do DACL.
+///
+/// A CI não pegou o bug porque `base_url()` roda ANTES de `ensaio()` em `api::enrolar` e o teste
+/// de um clique usa o build SEM endereço: ele sai 4 antes de encostar no cofre. O runner é admin
+/// sem SeRestore e reproduziria o "acesso negado" se o teste chegasse até aqui.
 fn fechar_acl(alvo: &std::path::Path, arquivo: bool) -> Result<(), ErroCofre> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
@@ -162,7 +165,21 @@ fn fechar_acl(alvo: &std::path::Path, arquivo: bool) -> Result<(), ErroCofre> {
     if saida.status.success() {
         Ok(())
     } else {
-        Err(ErroCofre::Falha("icacls não aplicou a ACL".into()))
+        // Inclui a saída do icacls (caminho + mensagem do Windows, sem segredo) pra o log da
+        // Esteira não mostrar só a frase genérica e a gente não voltar cego se o Vinny falhar.
+        let mut texto = String::from_utf8_lossy(&saida.stderr).trim().to_string();
+        let out = String::from_utf8_lossy(&saida.stdout);
+        let out = out.trim();
+        if !out.is_empty() {
+            if !texto.is_empty() {
+                texto.push_str(" | ");
+            }
+            texto.push_str(out);
+        }
+        Err(ErroCofre::Falha(format!(
+            "icacls saiu {:?}: {texto}",
+            saida.status.code()
+        )))
     }
 }
 
