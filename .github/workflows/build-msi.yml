@@ -154,6 +154,9 @@ jobs:
 
           # 1. Instala com um Run legado no HKCU (versão antiga): o .msi cria o serviço, o script confere
           #    e tira o Run (quem abre a cápsula agora é o serviço).
+          # A imagem nova do windows-latest não traz a chave Run no perfil limpo (a antiga trazia), e o
+          # -Force do New-ItemProperty cria o VALOR, não a CHAVE: cria a chave se faltar.
+          New-Item -Path $run -Force | Out-Null
           New-ItemProperty -Path $run -Name $nome -Value "`"$exe`" --sessao" -Force | Out-Null
           & $s -Msi $msi -SemEnrolar
           if ($LASTEXITCODE -ne 0) { throw "instalar falhou ($LASTEXITCODE)" }
