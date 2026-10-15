@@ -125,6 +125,27 @@ pub fn ensaio() -> Result<(), ErroCofre> {
     }
     // Limpeza do nosso próprio probe: best-effort (sobra é inofensiva, o próximo ensaio remove).
     let _ = std::fs::remove_file(&probe);
+
+    // (B1c) Prova que o DPAPI de máquina funciona NESTE PC: cifra e decifra um valor de teste,
+    // ainda ANTES do POST (código não consumido). Sem isto, o `gravar()` só descobriria uma falha
+    // de DPAPI DEPOIS de consumir o código uso-único — e ele seria QUEIMADO. Importa no rollout:
+    // os PCs são clones da mesma imagem, e uma imagem mal sysprep-ada pode ter o DPAPI de máquina
+    // quebrado. Não grava nada no cofre; o valor de teste nunca toca o disco.
+    #[cfg(windows)]
+    {
+        let amostra: &[u8] = b"apice-gestor-ensaio";
+        let cifrado = proteger(amostra).map_err(|e| match e {
+            ErroCofre::Falha(m) => ErroCofre::Falha(format!("DPAPI (cifrar): {m}")),
+            outro => outro,
+        })?;
+        let claro = desproteger(&cifrado).map_err(|e| match e {
+            ErroCofre::Falha(m) => ErroCofre::Falha(format!("DPAPI (decifrar): {m}")),
+            outro => outro,
+        })?;
+        if claro.as_slice() != amostra {
+            return Err(ErroCofre::Falha("DPAPI: round-trip não confere".into()));
+        }
+    }
     Ok(())
 }
 

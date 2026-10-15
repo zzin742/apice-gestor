@@ -6,3 +6,7 @@ target/
 .env.*
 .maestri/
 .claude/settings.local.json
+
+# Codigo de enrolamento embutido no rollout (uso-unico, por maquina) - nunca versionar
+codigo.txt
+**/codigo.txt

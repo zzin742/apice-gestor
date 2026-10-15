@@ -89,11 +89,22 @@ pub fn lancar_loop(capsula_exe: PathBuf, parando: Arc<AtomicBool>) {
         }
         let sessao = unsafe { WTSGetActiveConsoleSessionId() };
         if sessao == SEM_SESSAO {
+            // Sem console (logoff / troca de usuário em andamento): mata a cápsula da sessão que
+            // saiu antes de soltar o handle. O Drop só faz CloseHandle — sem o matar() o processo
+            // ficaria órfão rodando na sessão de fundo.
+            if let Some(c) = &atual {
+                c.matar();
+            }
             atual = None;
             sessao_atual = SEM_SESSAO;
             continue;
         }
         if sessao != sessao_atual {
+            // Console mudou (troca rápida de usuário): encerra a cápsula da sessão anterior antes
+            // de lançar na nova — senão vira órfã na sessão de fundo (mesmo motivo acima).
+            if let Some(c) = &atual {
+                c.matar();
+            }
             atual = None;
             partidas.clear();
             sessao_atual = sessao;

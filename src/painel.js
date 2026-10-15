@@ -78,6 +78,10 @@ function cadencia(){return 'GESTTA';}
 // Erros que significam "esta máquina precisa de código novo": não adianta tentar de novo.
 // not_enrolled = sem token no keychain (casca); unauthorized / token_revoked = 401 do Hub (contrato §1.4).
 var NAO_CONECTADO={not_enrolled:1,unauthorized:1,token_revoked:1};
+// Máquina conectada, mas ainda sem painel pra esta pessoa — NÃO é "sem conexão" (José Luiz, 15/10):
+// person_not_mapped (409) = enrolada, mas o nome ainda não foi vinculado ao Gestta pelo admin;
+// excluded_account (403)  = conta que não recebe o painel (robô/sistema/cliente).
+var AGUARDANDO={person_not_mapped:1,excluded_account:1};
 function semDado(){
   // máquina não conectada: nada de número, nem os que já estavam na tela
   data=null;all=[];byId={};
@@ -96,6 +100,15 @@ function fail(err){
     document.getElementById('stampTxt').textContent='não conectado';
     document.getElementById('bannerTxt').innerHTML='<b>Este computador ainda não foi conectado ao Ápice Hub.</b> Peça o código ao administrador.';
     document.getElementById('foot').textContent='NÃO CONECTADO';
+  }else if(AGUARDANDO[code]){
+    // Conectou, mas ainda não há painel pra esta pessoa: avisa com calma, não como falha de rede.
+    semDado();
+    var mapeando=code==='person_not_mapped';
+    document.getElementById('stampTxt').textContent=mapeando?'aguardando configuração':'conta sem painel';
+    document.getElementById('bannerTxt').innerHTML=mapeando
+      ?'<b>Computador conectado.</b> Aguardando o administrador vincular seu nome no Gestta. Suas tarefas aparecem assim que ele concluir.'
+      :'<b>Esta conta não recebe o painel de tarefas.</b>';
+    document.getElementById('foot').textContent=mapeando?'AGUARDANDO CONFIGURAÇÃO':'SEM PAINEL';
   }else if(!data){
     // sem resposta do Hub: se já temos dado, ele vira "velho"; se não, avisa sem inventar números
     document.getElementById('stampTxt').textContent='sem conexão';
