@@ -33,9 +33,14 @@ function rowHtml(t){
 function group(title,list,cls){return '<div class="g'+(cls?' '+cls:'')+'"><h2>'+title+' <span class="c">'+list.length+'</span></h2>'+list.map(rowHtml).join('')+'</div>';}
 
 /* ---------- render ---------- */
-var byId={},all=[],data=null,stale=false;
+var byId={},all=[],data=null,stale=false,renderKey='';
 function render(d){
   if(!d)return; // 304: nada mudou
+  // O 304 chega como o mesmo corpo de antes (o Rust devolve a cópia guardada). Consultando a cada
+  // poucos segundos (16/10/2026), redesenhar sem mudança faria a lista piscar e perder a rolagem.
+  var k=JSON.stringify([d.today,d.summary,d.tasks,d.truncated,d.person,d.sync&&d.sync.last_sync_at,d.sync&&d.sync.stale]);
+  if(k===renderKey)return;
+  renderKey=k;
   data=d;byId={};d.tasks.forEach(function(t){byId[t.id]=t;});
   var s=d.summary,today=ymd(d.today);
   document.getElementById('greetName').textContent='Bom dia, '+d.person.first_name;
@@ -119,7 +124,13 @@ function fail(err){
   if(!data)document.getElementById('capOv').parentNode.classList.add('zero');
   applyMode();
 }
-function load(){return api.getTasks().then(render,fail);}
+// Uma consulta por vez: o relógio, o foco e a volta da janela podem pedir juntos.
+var loading=null;
+function load(){
+  if(loading)return loading;
+  loading=api.getTasks().then(render,fail).then(function(){loading=null;},function(){loading=null;});
+  return loading;
+}
 
 /* ---------- busca (Todas) ---------- */
 var q=document.getElementById('q'),qn=document.getElementById('qn');
@@ -276,7 +287,13 @@ function morningDue(){
   return true;
 }
 var timer=null;
-function schedule(){clearInterval(timer);timer=setInterval(load,Math.max(60,cfg.poll_interval_seconds||600)*1000);}
+// Mínimo 10 s (era 60): o intervalo vem do Hub (me/config); "quase em tempo real", José Luiz 16/10/2026.
+function schedule(){clearInterval(timer);timer=setInterval(load,Math.max(10,cfg.poll_interval_seconds||600)*1000);}
+// Abriu ou clicou no painel: atualiza na hora, sem esperar o relógio (no máximo 1 vez a cada 3 s).
+var lastWake=0;
+function wake(){var t=Date.now();if(t-lastWake<3000)return;lastWake=t;load();}
+window.addEventListener('focus',wake);
+document.addEventListener('visibilitychange',function(){if(!document.hidden)wake();});
 api.getConfig().then(function(c){if(c)cfg=c;},function(err){console.warn('gestor config',err&&err.code);})
   .then(load).then(function(){schedule();if(morningDue())goodMorning();});
 paint();
