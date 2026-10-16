@@ -5,7 +5,10 @@ tela com as tarefas do dia (fonte: Gestta, via API do Ápice Hub). Só leitura �
 sendo no Gestta. Alimenta a escalação ao gestor por WhatsApp quando tarefa vence.
 
 - **Arquitetura e decisões:** `~/dev/Jarvis/PROJETOS/Apice-Gestor/Arquitetura.md`
-- **Interface aprovada:** `design/painel-do-dia.html` (abra no navegador)
+- **Interface aprovada:** `src/painel.html` + `src/painel.css` — cápsula vermelha (15/10/2026) e cartão
+  vermelho e branco (16/10/2026), os dois aprovados pelo José Luiz em preview. Para ver no navegador:
+  `npm run mock` e abra `src/index.html` (protótipo de revisão). `design/painel-do-dia.html` é o
+  protótipo anterior (07/10), guardado como histórico.
 - **Regras do projeto:** `AGENTS.md`
 
 Stack: Tauri v2 · interface web · build do `.msi` no GitHub Actions · painel de controle no Ápice Hub.

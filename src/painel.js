@@ -26,10 +26,13 @@ function tagOf(t){
   return ddmm(d);
 }
 function rowHtml(t){
-  var cls='task'+(t.status==='done'?' ok':t.bucket==='overdue'?' ov':t.bucket==='later'?' far':'');
+  var cls='task'+(t.status==='done'?' ok':t.bucket==='overdue'?' ov':t.bucket==='today'?' td':t.bucket==='later'?' far':'');
   var sub=esc(t.client)+(t.competence&&t.title.indexOf('comp.')<0?' · comp. '+esc(t.competence.slice(5)+'/'+t.competence.slice(0,4)):'')+(t.status==='impediment'?' · impedida':'');
   return '<div class="'+cls+'" tabindex="0" data-id="'+esc(t.id)+'" data-n="'+esc((t.title+' '+t.client).toLowerCase())+'"><span class="dot"></span><div class="tm"><b>'+esc(t.title)+'</b><small>'+sub+'</small></div><span class="tag">'+tagOf(t)+'<span class="go">↗</span></span></div>';
 }
+function saudacao(){var h=new Date().getHours();return h<12?'Bom dia':h<18?'Boa tarde':'Boa noite';}
+var CHECK='<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
+function vazio(titulo,sub){return '<div class="empty"><span class="ic">'+CHECK+'</span><div><b>'+titulo+'</b>'+sub+'</div></div>';}
 function group(title,list,cls){return '<div class="g'+(cls?' '+cls:'')+'"><h2>'+title+' <span class="c">'+list.length+'</span></h2>'+list.map(rowHtml).join('')+'</div>';}
 
 /* ---------- render ---------- */
@@ -39,12 +42,14 @@ function render(d){
   // O 304 chega como o mesmo corpo de antes (o Rust devolve a cópia guardada). Consultando a cada
   // poucos segundos (16/10/2026), redesenhar sem mudança faria a lista piscar e perder a rolagem.
   var k=JSON.stringify([d.today,d.summary,d.tasks,d.truncated,d.person,d.sync&&d.sync.last_sync_at,d.sync&&d.sync.stale]);
+  // A saudação depende da hora, não do dado: atualiza mesmo quando nada mudou (sem redesenhar a lista).
+  var ge=document.getElementById('greetName'),g=saudacao()+', '+d.person.first_name;
+  if(ge.textContent!==g)ge.textContent=g;
   if(k===renderKey)return;
   renderKey=k;
   data=d;byId={};d.tasks.forEach(function(t){byId[t.id]=t;});
   var s=d.summary,today=ymd(d.today);
-  document.getElementById('greetName').textContent='Bom dia, '+d.person.first_name;
-  document.getElementById('greetDate').textContent=DOW_LONG[today.getDay()]+', '+today.getDate()+' de '+MES[today.getMonth()];
+  document.getElementById('greetDate').textContent=DOW_LONG[today.getDay()]+', '+today.getDate()+' de '+MES[today.getMonth()]+(d.person.department?' · '+d.person.department:'');
   // cápsula e progresso
   document.getElementById('capOv').textContent=s.overdue;
   document.getElementById('capOv').parentNode.classList.toggle('zero',!s.overdue);
@@ -56,11 +61,11 @@ function render(d){
   var tb=tabsOf(d);
   // Hoje = vencidas + hoje (abertas antes das concluídas)
   document.getElementById('cHoje').textContent=tb.hoje.count;
-  document.getElementById('pane-hoje').innerHTML=(tb.hoje.overdue.length?group('Vencidas',tb.hoje.overdue,'v'):'')+(tb.hoje.today.length?group('Hoje',tb.hoje.today):'')||'<div class="empty">Nada pra hoje.</div>';
+  document.getElementById('pane-hoje').innerHTML=(tb.hoje.overdue.length?group('Vencidas',tb.hoje.overdue,'v'):'')+(tb.hoje.today.length?group('Hoje',tb.hoje.today):'')||vazio('Tudo em dia!','Nada vencido nem para hoje.');
   // Semana, por dia
   var groups={},order=[];
   tb.semana.tasks.forEach(function(t){if(!groups[t.due_date]){groups[t.due_date]=[];order.push(t.due_date);}groups[t.due_date].push(t);});
-  document.getElementById('pane-semana').innerHTML=order.map(function(k){var x=ymd(k);return group(cap(DOW[x.getDay()])+' '+x.getDate(),groups[k]);}).join('')||'<div class="empty">Nada agendado pra semana.</div>';
+  document.getElementById('pane-semana').innerHTML=order.map(function(k){var x=ymd(k);return group(cap(DOW[x.getDay()])+' '+x.getDate(),groups[k]);}).join('')||vazio('Semana livre','Nada agendado para os próximos 7 dias.');
   document.getElementById('cSemana').textContent=tb.semana.count;
   // Todas = não concluídas
   all=tb.todas.tasks;
@@ -89,7 +94,8 @@ var NAO_CONECTADO={not_enrolled:1,unauthorized:1,token_revoked:1};
 var AGUARDANDO={person_not_mapped:1,excluded_account:1};
 function semDado(){
   // máquina não conectada: nada de número, nem os que já estavam na tela
-  data=null;all=[];byId={};
+  data=null;all=[];byId={};renderKey='';
+  document.getElementById('greetName').textContent='Minhas tarefas';document.getElementById('greetDate').textContent='';
   ['capOv','capHoje','cHoje','cSemana','cTodas','progTxt'].forEach(function(id){document.getElementById(id).textContent='–';});
   document.getElementById('ringFg').setAttribute('stroke-dashoffset','47.1');
   document.getElementById('progBar').style.width='0%';
@@ -109,12 +115,13 @@ function fail(err){
     // Conectou, mas ainda não há painel pra esta pessoa: avisa com calma, não como falha de rede.
     semDado();
     var mapeando=code==='person_not_mapped';
-    document.getElementById('stampTxt').textContent=mapeando?'aguardando configuração':'conta sem painel';
+    document.getElementById('stampTxt').textContent=mapeando?'aguardando':'sem painel';
     document.getElementById('bannerTxt').innerHTML=mapeando
       ?'<b>Computador conectado.</b> Aguardando o administrador vincular seu nome no Gestta. Suas tarefas aparecem assim que ele concluir.'
       :'<b>Esta conta não recebe o painel de tarefas.</b>';
     document.getElementById('foot').textContent=mapeando?'AGUARDANDO CONFIGURAÇÃO':'SEM PAINEL';
   }else if(!data){
+    document.getElementById('greetDate').textContent='';
     // sem resposta do Hub: se já temos dado, ele vira "velho"; se não, avisa sem inventar números
     document.getElementById('stampTxt').textContent='sem conexão';
     document.getElementById('bannerTxt').innerHTML='<b>Sem conexão com o Hub.</b> Tentando de novo.';
@@ -173,10 +180,12 @@ var canHover=window.matchMedia&&window.matchMedia('(hover:hover) and (pointer:fi
 // Recolher: anima e só no fim da transição encolhe, senão o cartão é cortado no meio.
 var janela=document.documentElement.hasAttribute('data-janela'),aberto=false,seq=0;
 var FOLGA={lado:24,topo:12,base:36}; // espaço para a sombra do vidro (--glass-shadow)
-var CARTAO={largura:316,altura:470,vao:44}; // .card: width, height e bottom em painel.css
+var CARTAO={largura:332,altura:520,vao:44}; // .card: width, height e bottom em painel.css
 function medida(o){
   var c=capBtn.getBoundingClientRect();
   var w=o?Math.max(CARTAO.largura,c.width):c.width,h=o?CARTAO.altura+CARTAO.vao:c.height;
+  // tela baixa: a janela aberta não passa da área útil (o cartão encolhe pelo CSS)
+  if(o&&pos&&pos.area)h=Math.min(h,pos.area.altura-FOLGA.topo-FOLGA.base);
   return {largura:Math.ceil(w+2*FOLGA.lado),altura:Math.ceil(h+FOLGA.topo+FOLGA.base)};
 }
 function falhaJanela(e){console.warn('painel_tamanho',e);}

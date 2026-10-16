@@ -1,6 +1,6 @@
 [package]
 name = "apice-gestor"
-version = "0.1.1"
+version = "0.1.2"
 description = "Ápice Gestor — painel do dia do colaborador"
 authors = ["Ápice"]
 edition = "2021"

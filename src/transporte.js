@@ -26,7 +26,7 @@ function viaNavegador() {
   return createClient({
     baseUrl: qs.get('api') || MOCK_BASE_URL,
     token: qs.get('token') || 'gdt_mock_rafael',
-    agentVersion: '0.1.1',
+    agentVersion: '0.1.2',
   });
 }
 

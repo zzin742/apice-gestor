@@ -12,18 +12,15 @@
   body{color:var(--ink);font-family:var(--ui)}
   .hud{position:fixed;left:24px;right:24px;top:12px;bottom:36px}
   .card{max-width:none}
-  /* Proposta B (Chassi, 08/10): na janela real o blur não enxerga o que está atrás, então o vidro fica opaco.
-     Mudança visual — aguardando o José Luiz via Vigia. O protótipo (index.html) segue translúcido. */
-  :root{--glass:#f7f9fb}
-  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--glass:#1a1e26}}
-  :root[data-theme="dark"]{--glass:#1a1e26}
 </style>
 <body id="screen" data-mode="idle">
   <div class="hud" id="hud">
     <div class="card" role="region" aria-label="Minhas tarefas" id="card">
       <div class="c-head">
-        <div class="greet"><span id="greetName">Bom dia</span><small id="greetDate"></small></div>
-        <div class="c-top"><b>Minhas tarefas</b><span id="stampTxt">carregando…</span></div>
+        <div class="c-top">
+          <div class="greet"><span id="greetName">Minhas tarefas</span><small id="greetDate">carregando…</small></div>
+          <span class="stamp" id="stampTxt" title="Última atualização">…</span>
+        </div>
         <div class="prog"><div class="lbl"><span>Concluídas hoje</span><b id="progTxt">–</b></div><div class="bar"><i id="progBar" style="width:0%"></i></div></div>
         <div class="tabs" role="tablist" aria-label="Período">
           <button role="tab" aria-selected="true" data-tab="hoje" id="tab-hoje">Hoje <span class="c" id="cHoje">–</span></button>
@@ -47,7 +44,7 @@
       </div>
 
       <div class="auto">Recolhe sozinho em 10 s<div class="drain"><i></i></div></div>
-      <div class="c-foot"><span id="foot">GESTTA</span></div>
+      <div class="c-foot"><span id="foot">GESTTA</span><span class="hint">Clique na tarefa para abrir no Gestta ↗</span></div>
     </div>
 
     <button class="cap" id="cap" type="button" aria-expanded="false" aria-controls="card" aria-label="Abrir minhas tarefas">

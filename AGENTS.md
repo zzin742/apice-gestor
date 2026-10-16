@@ -10,8 +10,10 @@ do dia dele (fonte: Gestta, via API do Ápice Hub) e sustenta a escalação ao g
 ## PASSO 0
 1. `~/dev/Jarvis/PROJETOS/Apice-Gestor/Arquitetura.md` — o desenho inteiro e as decisões
 2. `~/dev/Jarvis/PROJETOS/Apice-Gestor/Estado-*.md` — o mais recente
-3. `design/painel-do-dia.html` — a interface aprovada pelo José Luiz. **Abra no navegador.**
-   É a referência visual e de comportamento; o app Tauri reaproveita este HTML/CSS/JS.
+3. `src/painel.html` + `src/painel.css` + `src/painel.js` — a interface aprovada pelo José Luiz:
+   cápsula vermelha (15/10/2026) e cartão vermelho e branco (16/10/2026), ambos aprovados em
+   preview com screenshots antes de subir. **Veja no navegador:** `npm run mock` e abra
+   `src/index.html`. `design/painel-do-dia.html` é o protótipo anterior (07/10), só histórico.
 4. `~/dev/Jarvis/AGENTES/PROTOCOLO-GIT-MULTIAGENTE.md` e `AGENTES/status/`
 
 ## As três regras do projeto
