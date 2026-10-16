@@ -22,7 +22,9 @@ exit /b
 :elevado
 
 rem 2. Codigo: embutido (codigo.txt) ou perguntado uma vez. O instalar.ps1 faz Trim e valida o formato.
+rem    Maquina ja enrolada (ATUALIZACAO do app): nao pede codigo, o instalar.ps1 mantem o token.
 set "APICE_CODIGO="
+if exist "%ProgramData%\ApiceGestor\device.token" goto instalar
 if exist "%~dp0codigo.txt" set /p "APICE_CODIGO="<"%~dp0codigo.txt"
 if not defined APICE_CODIGO set /p "APICE_CODIGO=Codigo de enrolamento (de /admin/dispositivos): "
 if not defined APICE_CODIGO (
@@ -30,6 +32,7 @@ if not defined APICE_CODIGO (
   pause
   exit /b 2
 )
+:instalar
 
 rem 3. Tudo numa execucao: o script le APICE_CODIGO do ambiente e o apaga.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0instalar.ps1"
