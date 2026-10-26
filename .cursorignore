@@ -1,0 +1,18 @@
+# A IA do Cursor NÃO lê estes arquivos (regra da Apice: segredo não vai pra IA, log nem commit). 26/10/2026
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+*.pfx
+*.p12
+*.pem
+*.key
+*.crt
+*.cer
+**/state/
+**/secrets/
+**/credenciais*
+**/*senha*
+**/*SENHA*
+*.jsonl

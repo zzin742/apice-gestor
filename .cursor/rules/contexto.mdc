@@ -1,0 +1,17 @@
+---
+description: Contexto do projeto (o que é, onde olhar, estado e pendências) — escrito pelo Claude Code em 26/10/2026
+alwaysApply: true
+---
+
+# Apice Gestor (app Windows) — contexto
+
+O QUE É: app leve (Tauri) na máquina de cada colaborador que mostra as tarefas do Gestta da pessoa (vencidas, hoje, semana); só leitura — a pessoa conclui no Gestta e o item fica verde. Fala só com a API do Hub (/api/gestor/*, token por máquina), nunca com o banco. Repo zzin742/apice-gestor (ramo feat/capsula-vermelha = versão 0.1.2, visual vermelho e branco aprovado). Build do .msi pelo GitHub Actions (build-msi.yml).
+
+INSTALAÇÃO
+- Pacote por pessoa na pasta da rede T: (//192.168.0.7/TRANSFERENCIA, montar com mount_smbfs -N //guest@192.168.0.7/TRANSFERENCIA ~/mnt/T) em <PASTA DO COLABORADOR>/Apice Gestor/: msi + instalar.cmd + instalar.ps1 + SHA256SUMS + codigo.txt (código de ativação de 24 h, uso único, tabela gestor_enroll_codes) + LEIA-ME. Na T: só entrar na pasta do colaborador; nunca abrir a raiz nem apagar nada.
+- Instalado: Vinny, Comercial, Contábil e Legalização (20–23/10). DP: pacotes colocados em 26/10 para 22 pessoas (códigos valiam até 27/10 09:34); faltam Gabriela Lisboa, Janailson, Odneia e Marcelo (sem pasta clara).
+- Bug conhecido: o agente não limpa ultimo_erro quando volta a funcionar (corrigir em api.rs no próximo build).
+
+Documentação: Jarvis/PROJETOS/Apice-Gestor/ (Estado-2026-10-19.md é o mais recente).
+
+Antes de mexer: leia também o AGENTS.md deste projeto e as regras em .cursor/rules/apice.mdc. Na dúvida sobre algo de produção, pergunte ao José Luiz em vez de chutar.

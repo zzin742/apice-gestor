@@ -1,0 +1,31 @@
+---
+description: Regras da Apice Contabilidade (valem em todo projeto da Apice)
+alwaysApply: true
+---
+
+Este projeto é da Apice Contabilidade (escritório de contabilidade). Quem pede é o José Luiz ("Zezinho") ou o Vinny (TI). Responda em português do Brasil, direto e simples.
+
+REGRAS QUE NÃO SE QUEBRAM
+1. Nada vai pra produção sem o José Luiz dizer "manda bala" — inclusive deploy, DDL/alteração de banco e push no main. Antes disso é proposta: prove em localhost/preview.
+   - Push no main do Apice Hub (avaliahub, repo marcospepli/apice-hub) = deploy automático em produção na Vercel. Trabalhe em ramo.
+2. Mudança visual: mostrar no localhost antes de subir, conferindo celular E computador (390, 1440 e 1920 px).
+3. Segredo (senha, token, chave de API, certificado) nunca entra em código, commit, log, print nem chat. Credenciais ficam fora do repositório (no Mac do José Luiz em ~/.config, permissão 600) e no .env da VPS. Em PC pessoal, guarde só o .env que a tarefa exigir.
+4. Uma chave de API por finalidade — nunca a mesma chave em dois sistemas.
+5. Proibido abrir: os .jsonl de ~/.claude/projects (histórico do Claude Code, com segredo); na pasta T: (rede, //192.168.0.7/TRANSFERENCIA) a raiz tem certificados de clientes e o "SENHAS - TODAS.txt" — nunca abrir; na T: só entrar na pasta do colaborador e nunca apagar nada.
+6. Nunca extrair/raspar dados do Busca.Legal; nunca resolver captcha automaticamente.
+7. Escreva "Apice" sem acento em telas, vídeos, legendas e documentos.
+8. Errou? Diga direto. Teste falhou? Mostre. Não diga que funcionou sem conferir.
+9. Git: add por nome de arquivo (nunca add -A), sem --force, sem --amend, sem reset --hard.
+10. Localhost do Hub grava no banco de PRODUÇÃO — teste nunca liga dado visível pros usuários antes do deploy.
+
+ONDE ESTÁ CADA COISA (no Mac do José Luiz: ~/dev, abrir ~/dev/Apice.code-workspace; em outro PC, onde cada um clonou os repositórios)
+- avaliahub = Apice Hub (Next 16 — leia node_modules/next/dist/docs antes de mexer; ver AGENTS.md), Supabase jgkwyapslhqapdvupdbv. BI em /bi (src/lib/bi, src/components/bi).
+- apice-automa-onvio = robôs (repo zzin742/apice-automa-onvio). Rodam na VPS Hostinger "vps-apice" (srv1990285, ssh vps-apice) em /home/apice/automa-onvio, deploy por cópia (a pasta da VPS não é git), como usuário apice, agendador systemd de usuário "apice-scheduler". Robô novo precisa estar em ROBOS_HABILITADOS no .env da VPS.
+  Robôs: gestta_live (tarefas do Gestta a cada minuto), gestta (relatório), gestta_apontamentos, onvio_dp (solicitações do Onvio a cada 5 min), fechamento_sn, dec_sp/dec_go (DEC, 3h/2h30 seg–sex) + dec_tarefas, sol_tarefas (solicitação do Onvio → tarefa no Gestta; EM TESTE, sem agenda, tudo no nome do José Luiz).
+  A conta do Onvio aceita 1 sessão: nunca fazer login à toa; reusar os tokens salvos em state/.
+- whatsapice = WhatsApice; apice-gestor = app Windows (Tauri) que mostra as tarefas do Gestta (pacotes na T: em <PASTA DO COLABORADOR>\Apice Gestor); apice-bi = Apice Finance; apice-web = site (branch master); consultapice = consulta tributária (só fontes públicas); zetax = pausado.
+- Jarvis = vault de documentação. Antes de escrever lá: ler AGENTES/status/, declarar a sessão, escrever só na própria subpasta. Commit e push fazem parte da tarefa.
+
+EQUIPE DE IA
+- No Mac do José Luiz também roda o Claude Code (extensão no Cursor), que cuida dos robôs/VPS/deploy e tem memória própria em ~/.claude. Não mexa em ~/.claude.
+- O AGENTS.md de cada projeto vale junto com estas regras (ex.: no Hub, Next 16 com mudanças — ler os docs em node_modules/next/dist/docs).
